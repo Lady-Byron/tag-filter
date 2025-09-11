@@ -33,6 +33,7 @@ app.initializers.add(EXT_ID, () => {
 
       parts.push(
         <span
+          key={`tl-tag-${slug}`}
           className="lbtc-tf-ToolbarTag"
           style={{ '--tag-title-color': color } as any}
           data-tag-slug={slug}
@@ -41,7 +42,9 @@ app.initializers.add(EXT_ID, () => {
         </span>
       );
 
-      if (i < tagSlugs.length - 1) parts.push(<span className="lbtc-tf-ToolbarSep">{' '}</span>);
+      if (i < tagSlugs.length - 1) {
+        parts.push(<span key={`tl-sep-${i}`} className="lbtc-tf-ToolbarSep">{' '}</span>);
+      }
     });
 
     return parts;
@@ -72,4 +75,3 @@ app.initializers.add(EXT_ID, () => {
     );
   });
 });
-
