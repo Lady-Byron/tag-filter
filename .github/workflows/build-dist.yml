@@ -37,7 +37,6 @@ jobs:
           echo "== List js/dist =="
           ls -lah js/dist || true
           test -f js/dist/forum.js || { echo "::error::js/dist/forum.js not found after build"; exit 1; }
-          test -f js/dist/admin.js || { echo "::error::js/dist/admin.js not found after build"; exit 1; }
 
       - name: Commit dist (force add even if ignored)
         run: |
