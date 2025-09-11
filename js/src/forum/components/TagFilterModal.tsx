@@ -1,3 +1,4 @@
+// js/src/forum/components/TagFilterModal.tsx
 import app from 'flarum/forum/app';
 import Modal from 'flarum/common/components/Modal';
 import Button from 'flarum/common/components/Button';
@@ -48,11 +49,43 @@ export default class TagFilterModal extends Modal {
     this.hide();
   }
 
-  // 把右上角 X 强制设为非提交按钮，避免触发 submit
+  // —— 修复点：确保 X 永远不是 submit，并强制触发 hide() ——
   oncreate(vnode: Mithril.VnodeDOM) {
     super.oncreate(vnode);
-    const closeBtn = this.element?.querySelector<HTMLButtonElement>('.Modal-close');
-    if (closeBtn && !closeBtn.getAttribute('type')) closeBtn.setAttribute('type', 'button');
+    this.fixCloseBtn();
+  }
+
+  onupdate(vnode: Mithril.VnodeDOM) {
+    // Modal 可能无 onupdate，做可选调用
+    // @ts-ignore
+    super.onupdate?.(vnode);
+    this.fixCloseBtn();
+  }
+
+  private fixCloseBtn() {
+    const btn = this.element?.querySelector<HTMLButtonElement>('.Modal-close');
+    if (!btn) return;
+
+    // 1) 永远是非提交按钮，避免触发表单校验/提交
+    if (btn.getAttribute('type') !== 'button') btn.setAttribute('type', 'button');
+    // 2) 进一步保险：禁用表单校验
+    btn.setAttribute('formnovalidate', 'true');
+
+    // 3) 捕获阶段强制关闭，避免被其他冒泡/提交影响（只绑定一次）
+    // @ts-ignore
+    if (!(btn as any)._lbFixed) {
+      // @ts-ignore
+      (btn as any)._lbFixed = true;
+      btn.addEventListener(
+        'click',
+        (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.hide();
+        },
+        { capture: true }
+      );
+    }
   }
 
   /**
@@ -312,4 +345,3 @@ export default class TagFilterModal extends Modal {
     this.hide();
   }
 }
-
