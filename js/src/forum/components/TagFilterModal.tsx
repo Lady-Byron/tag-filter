@@ -4,10 +4,8 @@ import Button from 'flarum/common/components/Button';
 import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
 import Stream from 'flarum/common/utils/Stream';
 import classList from 'flarum/common/utils/classList';
-
 import sortTags from 'flarum/tags/common/utils/sortTags';
 import type Tag from 'flarum/tags/common/models/Tag';
-
 import TagChip from './TagChip';
 import { getCategories, pickTagsInCategories, loadCollapsed, saveCollapsed } from '../util/categories';
 import { getCurrentQ, parseQ, stringifyQ, toggleTagSlug, clearTagsInQ } from '../util/query';
@@ -21,47 +19,36 @@ export default class TagFilterModal extends Modal {
   private collapsed: Record<string, boolean> = {};
   private initialized = false;
 
-  className() {
-    return 'lbtc-tf-Modal Modal--large';
-  }
-
-  title() {
-    return app.translator.trans('lady-byron-tag-filter.forum.toolbar.button');
-  }
+  className() { return 'lbtc-tf-Modal Modal--large'; }
+  title() { return app.translator.trans('lady-byron-tag-filter.forum.toolbar.button'); }
 
   async oninit(vnode: Vnode) {
     super.oninit(vnode);
-
-    if (!app.store.all('tags').length) {
-      await app.store.find('tags');
-    }
+    if (!app.store.all('tags').length) await app.store.find('tags');
     this.allTags = app.store.all<Tag>('tags');
-
     this.collapsed = loadCollapsed();
     this.loading = false;
   }
 
-  /** ⚠️ 保留 Modal 外层骨架，只重写 content() */
+  // ★ 防止包裹的 <form> 被意外提交
+  onsubmit(e: SubmitEvent) { e.preventDefault(); }
+
   content() {
-    if (this.loading) {
-      return <div className="Modal-body"><LoadingIndicator /></div>;
-    }
+    if (this.loading) return <div className="Modal-body"><LoadingIndicator /></div>;
 
     const { tagSlugs: selectedSlugs } = parseQ(getCurrentQ());
     const selectedSet = new Set(selectedSlugs);
 
-    // 关键词过滤
     const keyword = (this.filter() || '').trim().toLowerCase();
     const visible = keyword
       ? this.allTags.filter((t) => (`${t.name()} ${t.description() || ''}`).toLowerCase().includes(keyword))
       : this.allTags.slice();
 
-    // 分组模式（依赖 tag-categories）
     const cats = getCategories();
+
     if (cats.length) {
       const { grouped, ungrouped } = pickTagsInCategories(visible, cats);
 
-      // 默认全部折叠（只做一次）
       if (!this.initialized) {
         cats.forEach((g) => (this.collapsed[String(g.id)] ??= true));
         if (ungrouped.length) this.collapsed.__ungrouped__ ??= true;
@@ -69,24 +56,12 @@ export default class TagFilterModal extends Modal {
         saveCollapsed(this.collapsed);
       }
 
-      const expandAll = () => {
-        cats.forEach((g) => (this.collapsed[String(g.id)] = false));
-        this.collapsed.__ungrouped__ = false;
-        saveCollapsed(this.collapsed);
-        m.redraw();
-      };
-      const collapseAll = () => {
-        cats.forEach((g) => (this.collapsed[String(g.id)] = true));
-        this.collapsed.__ungrouped__ = true;
-        saveCollapsed(this.collapsed);
-        m.redraw();
-      };
+      const expandAll = () => { cats.forEach((g) => (this.collapsed[String(g.id)] = false)); this.collapsed.__ungrouped__ = false; saveCollapsed(this.collapsed); m.redraw(); };
+      const collapseAll = () => { cats.forEach((g) => (this.collapsed[String(g.id)] = true));  this.collapsed.__ungrouped__ = true;  saveCollapsed(this.collapsed); m.redraw(); };
 
       const header = this.renderHeader(selectedSlugs, expandAll, collapseAll);
-
       const sections: Mithril.Children[] = [];
 
-      // 已分组
       grouped.forEach(({ group, tags }) => {
         const key = String(group.id);
         const isCollapsed = !!this.collapsed[key];
@@ -95,9 +70,7 @@ export default class TagFilterModal extends Modal {
         sections.push(
           <li
             className={classList('lbtc-tf-GroupHeader', { collapsed: isCollapsed })}
-            role="button"
-            aria-expanded={!isCollapsed}
-            tabindex="0"
+            role="button" aria-expanded={!isCollapsed} tabindex="0"
             onclick={() => this.toggle(key)}
             onkeydown={(e: KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), this.toggle(key))}
           >
@@ -109,18 +82,15 @@ export default class TagFilterModal extends Modal {
         if (!isCollapsed) {
           sections.push(
             <li className="lbtc-tf-GroupBody">
-              {sorted.map((t) =>
-                TagChip(t, {
-                  selected: selectedSet.has(t.slug()!),
-                  onclick: () => this.toggleSelect(t.slug()!),
-                })
-              )}
+              {sorted.map((t) => TagChip(t, {
+                selected: selectedSet.has(t.slug()!),
+                onclick: () => this.toggleSelect(t.slug()!),
+              }))}
             </li>
           );
         }
       });
 
-      // 未分组
       if (ungrouped.length) {
         const key = '__ungrouped__';
         const isCollapsed = !!this.collapsed[key];
@@ -129,9 +99,7 @@ export default class TagFilterModal extends Modal {
         sections.push(
           <li
             className={classList('lbtc-tf-GroupHeader', { collapsed: isCollapsed })}
-            role="button"
-            aria-expanded={!isCollapsed}
-            tabindex="0"
+            role="button" aria-expanded={!isCollapsed} tabindex="0"
             onclick={() => this.toggle(key)}
             onkeydown={(e: KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), this.toggle(key))}
           >
@@ -143,18 +111,15 @@ export default class TagFilterModal extends Modal {
         if (!isCollapsed) {
           sections.push(
             <li className="lbtc-tf-GroupBody">
-              {sorted.map((t) =>
-                TagChip(t, {
-                  selected: selectedSet.has(t.slug()!),
-                  onclick: () => this.toggleSelect(t.slug()!),
-                })
-              )}
+              {sorted.map((t) => TagChip(t, {
+                selected: selectedSet.has(t.slug()!),
+                onclick: () => this.toggleSelect(t.slug()!),
+              }))}
             </li>
           );
         }
       }
 
-      // ✅ 关键：返回标准骨架（Modal-body / Modal-footer）
       return [
         header,
         <div className="Modal-footer">
@@ -163,20 +128,17 @@ export default class TagFilterModal extends Modal {
       ];
     }
 
-    // —— 无分类回退（扁平） ——
+    // 无分类：扁平回退
     const header = this.renderHeader(selectedSlugs);
     const flat = sortTags(visible.slice());
-
     return [
       header,
       <div className="Modal-footer">
         <div className="lbtc-tf-GroupBody">
-          {flat.map((t) =>
-            TagChip(t, {
-              selected: selectedSet.has(t.slug()!),
-              onclick: () => this.toggleSelect(t.slug()!),
-            })
-          )}
+          {flat.map((t) => TagChip(t, {
+            selected: selectedSet.has(t.slug()!),
+            onclick: () => this.toggleSelect(t.slug()!),
+          }))}
         </div>
       </div>,
     ];
@@ -200,15 +162,15 @@ export default class TagFilterModal extends Modal {
             />
           </div>
           <div className="Form-group">
-            <Button className="Button" icon="fas fa-eraser" onclick={clearAll} disabled={!selectedSlugs.length}>
+            <Button type="button" className="Button" icon="fas fa-eraser" onclick={clearAll} disabled={!selectedSlugs.length}>
               {app.translator.trans('lady-byron-tag-filter.forum.toolbar.clear')}
             </Button>
             {expandAll && collapseAll ? (
               <>
-                <Button className="Button" style={{ marginLeft: '8px' }} onclick={expandAll}>
+                <Button type="button" className="Button" style={{ marginLeft: '8px' }} onclick={expandAll}>
                   {app.translator.trans('lady-byron-tag-filter.forum.toolbar.expand_all')}
                 </Button>
-                <Button className="Button" style={{ marginLeft: '8px' }} onclick={collapseAll}>
+                <Button type="button" className="Button" style={{ marginLeft: '8px' }} onclick={collapseAll}>
                   {app.translator.trans('lady-byron-tag-filter.forum.toolbar.collapse_all')}
                 </Button>
               </>
@@ -233,7 +195,7 @@ export default class TagFilterModal extends Modal {
   }
 
   private navigateWithQ(q: string) {
-    // 跳到首页并携带 q；保留其他常用参数可按需扩展
+    // 跳到首页并携带 q
     m.route.set(app.route('index', q ? { q } : {}));
     this.hide();
   }
