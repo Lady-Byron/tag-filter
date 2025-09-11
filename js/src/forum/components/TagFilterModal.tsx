@@ -15,7 +15,7 @@ import { ensureCategoryTagsLoaded, warmupTags } from '../util/tags';
 type Vnode = Mithril.Vnode<Record<string, never>, TagFilterModal>;
 
 export default class TagFilterModal extends Modal {
-  // ⬇⬇⬇ 关键改名：避免与 Modal.loading 冲突 ⬇⬇⬇
+  // 用自有字段名，避免与基类 Modal.loading 冲突
   private tfLoading = true;
 
   private allTags: Tag[] = [];
@@ -38,10 +38,9 @@ export default class TagFilterModal extends Modal {
     super.oninit(vnode);
     this.collapsed = loadCollapsed();
 
-    // 仅当分类需要但缓存缺失时才请求；否则使用已有缓存
     await ensureCategoryTagsLoaded();
     this.allTags = app.store.all<Tag>('tags');
-    this.tfLoading = false; // ✅ 不再触发 Modal 基类的 loading 逻辑
+    this.tfLoading = false;
   }
 
   // 表单提交一律视为“关闭”以规避 submit 干扰
@@ -50,11 +49,53 @@ export default class TagFilterModal extends Modal {
     this.hide();
   }
 
-  // 把右上角 X 强制设为非提交按钮，避免触发 submit
   oncreate(vnode: Mithril.VnodeDOM) {
     super.oncreate(vnode);
-    const closeBtn = this.element?.querySelector<HTMLButtonElement>('.Modal-close');
-    if (closeBtn && !closeBtn.getAttribute('type')) closeBtn.setAttribute('type', 'button');
+    this.fixCloseButton();
+  }
+
+  onupdate(vnode: Mithril.VnodeDOM) {
+    // @ts-ignore
+    super.onupdate?.(vnode);
+    this.fixCloseButton();
+  }
+
+  /**
+   * 让右上角 X 必定可点：
+   * - 统一设为 type="button"
+   * - 移除 disabled/aria-disabled
+   * - 绑定捕获级点击直接关闭
+   * - 每次重绘后都执行，防止被基类再次置回禁用
+   */
+  private fixCloseButton() {
+    const root = this.element as HTMLElement | null;
+    if (!root) return;
+
+    const btn = root.querySelector<HTMLButtonElement>('.Modal-close');
+    if (!btn) return;
+
+    // 永远是普通按钮，而不是 submit
+    btn.type = 'button';
+
+    // 移除禁用态（Flarum 基类可能在 loading 时加上）
+    btn.removeAttribute('disabled');
+    btn.removeAttribute('aria-disabled');
+    (btn as any).disabled = false;
+
+    // 只绑定一次捕获级点击（优先于其它监听）
+    if (!(btn as any)._lbtcBound) {
+      (btn as any)._lbtcBound = true;
+      btn.addEventListener(
+        'click',
+        (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          // 直接调用自身 hide（等价于 app.modal.close()）
+          this.hide();
+        },
+        { capture: true }
+      );
+    }
   }
 
   /**
@@ -81,12 +122,12 @@ export default class TagFilterModal extends Modal {
 
     if (!this.guardPending) {
       this.guardPending = true;
-      this.tfLoading = true; // ✅ 用自己的标志位
+      this.tfLoading = true;
       warmupTags()
         .catch(() => {})
         .finally(() => {
           this.allTags = app.store.all<Tag>('tags');
-          this.tfLoading = false; // ✅ 结束自有 loading
+          this.tfLoading = false;
           this.guardPending = false;
           m.redraw();
         });
@@ -95,7 +136,6 @@ export default class TagFilterModal extends Modal {
   }
 
   content() {
-    // ✅ 用 tfLoading 控制本组件的加载指示
     if (this.tfLoading) {
       return <div className="Modal-body"><LoadingIndicator /></div>;
     }
