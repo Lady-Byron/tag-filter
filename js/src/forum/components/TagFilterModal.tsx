@@ -15,7 +15,9 @@ import { ensureCategoryTagsLoaded, warmupTags } from '../util/tags';
 type Vnode = Mithril.Vnode<Record<string, never>, TagFilterModal>;
 
 export default class TagFilterModal extends Modal {
-  private loading = true;
+  // ⬇⬇⬇ 关键改名：避免与 Modal.loading 冲突 ⬇⬇⬇
+  private tfLoading = true;
+
   private allTags: Tag[] = [];
   private filter = Stream<string>('');
   private collapsed: Record<string, boolean> = {};
@@ -23,9 +25,6 @@ export default class TagFilterModal extends Modal {
 
   // 防止 guard 重入
   private guardPending = false;
-
-  // —— 仅为修复 X 偶发无法关闭：全局捕获点击矫正 —— //
-  private teardownCloseHack?: () => void;
 
   className() {
     return 'lbtc-tf-Modal Modal--large';
@@ -39,114 +38,30 @@ export default class TagFilterModal extends Modal {
     super.oninit(vnode);
     this.collapsed = loadCollapsed();
 
+    // 仅当分类需要但缓存缺失时才请求；否则使用已有缓存
     await ensureCategoryTagsLoaded();
     this.allTags = app.store.all<Tag>('tags');
-    this.loading = false;
+    this.tfLoading = false; // ✅ 不再触发 Modal 基类的 loading 逻辑
   }
 
-  // 表单提交一律视为“关闭”以规避 submit 干扰（保留原策略）
+  // 表单提交一律视为“关闭”以规避 submit 干扰
   onsubmit(e: SubmitEvent) {
     e.preventDefault();
     this.hide();
   }
 
+  // 把右上角 X 强制设为非提交按钮，避免触发 submit
   oncreate(vnode: Mithril.VnodeDOM) {
     super.oncreate(vnode);
-    this.ensureCloseWorking();
-  }
-
-  onupdate(vnode: Mithril.VnodeDOM) {
-    // @ts-ignore 可选调用
-    super.onupdate?.(vnode);
-    this.ensureCloseWorking();
-  }
-
-  onremove() {
-    // 清理全局捕获监听
-    this.teardownCloseHack?.();
-    this.teardownCloseHack = undefined;
-    // @ts-ignore
-    super.onremove?.();
+    const closeBtn = this.element?.querySelector<HTMLButtonElement>('.Modal-close');
+    if (closeBtn && !closeBtn.getAttribute('type')) closeBtn.setAttribute('type', 'button');
   }
 
   /**
-   * 让右上角 X 在任何情况下都能关闭：
-   * 1) 若是 <button>，强制设为 type="button"，并绑定一次性点击直接 hide()
-   * 2) 安装 document 级捕获监听：只要点击点落在 X 的矩形区域内，就强制 hide()
+   * 渲染前兜底：若发现分类中的某些 tagId 仍未载入，
+   * 触发一次后台加载并显示 Loading；加载完自动重绘。
+   * 同步返回：true=可渲染，false=需等待。
    */
-  private ensureCloseWorking() {
-    const root = this.element as HTMLElement | null;
-    if (!root) return;
-
-    const closeEl = root.querySelector('.Modal-close') as HTMLElement | null;
-    if (!closeEl) return;
-
-    // (1) 按钮型的基础修正
-    if (closeEl.tagName === 'BUTTON') {
-      const btn = closeEl as HTMLButtonElement;
-      if (btn.getAttribute('type') !== 'button') btn.setAttribute('type', 'button');
-      btn.setAttribute('formnovalidate', 'true');
-
-      // 仅绑定一次（放在捕获阶段，优先触发）
-      // @ts-ignore
-      if (!btn._lbFixed) {
-        // @ts-ignore
-        btn._lbFixed = true;
-        btn.addEventListener(
-          'click',
-          (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            this.hide();
-          },
-          { capture: true }
-        );
-      }
-    } else {
-      // 若不是 <button>（如 <a> / <div>），也补一个直接关闭的监听
-      // @ts-ignore
-      if (!closeEl._lbFixed) {
-        // @ts-ignore
-        closeEl._lbFixed = true;
-        closeEl.addEventListener(
-          'click',
-          (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            this.hide();
-          },
-          { capture: true }
-        );
-      }
-    }
-
-    // (2) 全局捕获“矩形命中”矫正（解决透明覆盖/层叠遮挡导致点不到 X 的情况）
-    if (!this.teardownCloseHack) {
-      const handler = (e: MouseEvent) => {
-        // 若节点已不在文档中则忽略
-        if (!document.body.contains(closeEl)) return;
-
-        const rect = closeEl.getBoundingClientRect();
-        const { clientX: x, clientY: y } = e;
-
-        const hit =
-          x >= rect.left &&
-          x <= rect.right &&
-          y >= rect.top &&
-          y <= rect.bottom;
-
-        if (hit) {
-          e.preventDefault();
-          e.stopPropagation();
-          this.hide();
-        }
-      };
-
-      document.addEventListener('click', handler, true);
-      this.teardownCloseHack = () => document.removeEventListener('click', handler, true);
-    }
-  }
-
   private guardEnsureLoaded(): boolean {
     const cats = getCategories();
     if (!cats.length) return true;
@@ -166,12 +81,12 @@ export default class TagFilterModal extends Modal {
 
     if (!this.guardPending) {
       this.guardPending = true;
-      this.loading = true;
+      this.tfLoading = true; // ✅ 用自己的标志位
       warmupTags()
         .catch(() => {})
         .finally(() => {
           this.allTags = app.store.all<Tag>('tags');
-          this.loading = false;
+          this.tfLoading = false; // ✅ 结束自有 loading
           this.guardPending = false;
           m.redraw();
         });
@@ -180,9 +95,11 @@ export default class TagFilterModal extends Modal {
   }
 
   content() {
-    if (this.loading) {
+    // ✅ 用 tfLoading 控制本组件的加载指示
+    if (this.tfLoading) {
       return <div className="Modal-body"><LoadingIndicator /></div>;
     }
+    // 若仍缺失，先显示 Loading，等 guard 拉完再渲染
     if (!this.guardEnsureLoaded()) {
       return <div className="Modal-body"><LoadingIndicator /></div>;
     }
@@ -200,6 +117,7 @@ export default class TagFilterModal extends Modal {
     if (cats.length) {
       const { grouped, ungrouped } = pickTagsInCategories(visible, cats);
 
+      // 默认全部折叠（含“未分组”），只做一次；状态持久化
       if (!this.initialized) {
         cats.forEach((g) => (this.collapsed[String(g.id)] ??= true));
         if (ungrouped.length) this.collapsed.__ungrouped__ ??= true;
@@ -223,6 +141,7 @@ export default class TagFilterModal extends Modal {
       const header = this.renderHeader(selectedSlugs, expandAll, collapseAll);
       const sections: Mithril.Children[] = [];
 
+      // 已分组
       grouped.forEach(({ group, tags }) => {
         const key = String(group.id);
         const isCollapsed = !!this.collapsed[key];
@@ -258,6 +177,7 @@ export default class TagFilterModal extends Modal {
         }
       });
 
+      // 未分组
       if (ungrouped.length) {
         const key = '__ungrouped__';
         const isCollapsed = !!this.collapsed[key];
@@ -301,6 +221,7 @@ export default class TagFilterModal extends Modal {
       ];
     }
 
+    // —— 无分组：扁平回退 ——
     const header = this.renderHeader(selectedSlugs);
     const flat = sortTags(visible.slice());
     return [
