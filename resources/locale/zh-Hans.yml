@@ -1,0 +1,10 @@
+lady-byron-tag-filter:
+  forum:
+    toolbar:
+      button: 标签
+      placeholder: 搜索…
+      clear: 清空
+      expand_all: 全部展开
+      collapse_all: 全部折叠
+    grouped:
+      ungrouped: 未分组
