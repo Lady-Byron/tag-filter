@@ -10,6 +10,7 @@ import type Tag from 'flarum/tags/common/models/Tag';
 import TagChip from './TagChip';
 import { getCategories, pickTagsInCategories, loadCollapsed, saveCollapsed } from '../util/categories';
 import { getCurrentQ, parseQ, stringifyQ, toggleTagSlug, clearTagsInQ } from '../util/query';
+import { ensureCategoryTagsLoaded, warmupTags } from '../util/tags';  // ★ 新增
 
 type Vnode = Mithril.Vnode<Record<string, never>, TagFilterModal>;
 
@@ -26,52 +27,36 @@ export default class TagFilterModal extends Modal {
   async oninit(vnode: Vnode) {
     super.oninit(vnode);
     this.collapsed = loadCollapsed();
-    await this.fetchAllTags();   // ★ 无条件拉全量，避免半缓存
+    // ★ 仅在缺少“分类里需要的标签”时才请求；否则即用缓存
+    await ensureCategoryTagsLoaded();
+    this.allTags = app.store.all<Tag>('tags');
     this.loading = false;
   }
 
-  // 防止包裹的 <form> 被意外提交
   onsubmit(e: SubmitEvent) { e.preventDefault(); }
 
-  /** 拉取“全量 tags”（包含父子），并刷新本地快照 */
-  private async fetchAllTags() {
-    try {
-      // include 父/子，limit 足够大，确保一次拉全
-      await app.store.find('tags', { include: 'parent,children', 'page[limit]': 999 });
-    } catch (e) {
-      // 安静失败，尽量用已有缓存
-    }
-    this.allTags = app.store.all<Tag>('tags');
-  }
-
-  /** 若发现有分类里的 tagId 还未加载，则触发一次补拉取并进入 Loading */
-  private ensureTagsForCategoriesLoaded(): boolean {
+  /** 若渲染时仍发现缺失（理论上极少），补拉并转入 Loading */
+  private async guardEnsureLoaded() {
     const cats = getCategories();
     if (!cats.length) return true;
 
+    const need = new Set<string>();
+    cats.forEach((g) => (g.tagIds || []).forEach((id) => need.add(String(id))));
     const have = new Set(this.allTags.map((t) => String(t.id())));
-    const need: string[] = [];
-    for (const g of cats) {
-      for (const id of g.tagIds || []) {
-        const key = String(id);
-        if (!have.has(key)) need.push(key);
-      }
-    }
-    if (!need.length) return true;
+    const missing = [...need].some((id) => !have.has(id));
+    if (!missing) return true;
 
-    // 进入一次 Loading，补拉后重绘
-    if (!this.loading) {
-      this.loading = true;
-      this.fetchAllTags().finally(() => { this.loading = false; m.redraw(); });
-    }
-    return false;
+    this.loading = true;
+    await warmupTags();
+    this.allTags = app.store.all<Tag>('tags');
+    this.loading = false;
+    return true;
   }
 
   content() {
-    // 若分类中仍有未加载的 tag，先显示 Loading
-    if (!this.ensureTagsForCategoriesLoaded() || this.loading) {
-      return <div className="Modal-body"><LoadingIndicator /></div>;
-    }
+    if (this.loading) return <div className="Modal-body"><LoadingIndicator /></div>;
+    // 极端兜底
+    if (!this.guardEnsureLoaded()) return <div className="Modal-body"><LoadingIndicator /></div>;
 
     const { tagSlugs: selectedSlugs } = parseQ(getCurrentQ());
     const selectedSet = new Set(selectedSlugs);
@@ -188,7 +173,6 @@ export default class TagFilterModal extends Modal {
       this.navigateWithQ(cleared);
     };
 
-    // 选中反馈（彩色芯片，描述已在 CSS 隐藏）
     const bySlug = new Map(this.allTags.map((t) => [t.slug()!, t]));
     const selectedTags = selectedSlugs.map((s) => bySlug.get(s)).filter(Boolean) as Tag[];
 
@@ -222,10 +206,7 @@ export default class TagFilterModal extends Modal {
             {selectedTags.length ? (
               <div className="lbtc-tf-GroupBody">
                 {selectedTags.map((t) =>
-                  TagChip(t, {
-                    selected: true,
-                    onclick: () => this.toggleSelect(t.slug()!),
-                  })
+                  TagChip(t, { selected: true, onclick: () => this.toggleSelect(t.slug()!) })
                 )}
               </div>
             ) : null}
