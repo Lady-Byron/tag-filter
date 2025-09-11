@@ -15,6 +15,7 @@ export default function TagChip(
 
   return (
     <button
+      type="button"                                       // ★ 防止提交表单
       className={'lbtc-tf-Chip Button ' + (selected ? 'is-selected' : '')}
       style={{ '--tag-title-color': color } as any}
       onclick={opts.onclick}
@@ -33,3 +34,4 @@ export default function TagChip(
     </button>
   );
 }
+
