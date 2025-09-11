@@ -6,6 +6,7 @@ import Stream from 'flarum/common/utils/Stream';
 import classList from 'flarum/common/utils/classList';
 import sortTags from 'flarum/tags/common/utils/sortTags';
 import type Tag from 'flarum/tags/common/models/Tag';
+
 import TagChip from './TagChip';
 import { getCategories, pickTagsInCategories, loadCollapsed, saveCollapsed } from '../util/categories';
 import { getCurrentQ, parseQ, stringifyQ, toggleTagSlug, clearTagsInQ } from '../util/query';
@@ -24,17 +25,53 @@ export default class TagFilterModal extends Modal {
 
   async oninit(vnode: Vnode) {
     super.oninit(vnode);
-    if (!app.store.all('tags').length) await app.store.find('tags');
-    this.allTags = app.store.all<Tag>('tags');
     this.collapsed = loadCollapsed();
+    await this.fetchAllTags();   // ★ 无条件拉全量，避免半缓存
     this.loading = false;
   }
 
-  // ★ 防止包裹的 <form> 被意外提交
+  // 防止包裹的 <form> 被意外提交
   onsubmit(e: SubmitEvent) { e.preventDefault(); }
 
+  /** 拉取“全量 tags”（包含父子），并刷新本地快照 */
+  private async fetchAllTags() {
+    try {
+      // include 父/子，limit 足够大，确保一次拉全
+      await app.store.find('tags', { include: 'parent,children', 'page[limit]': 999 });
+    } catch (e) {
+      // 安静失败，尽量用已有缓存
+    }
+    this.allTags = app.store.all<Tag>('tags');
+  }
+
+  /** 若发现有分类里的 tagId 还未加载，则触发一次补拉取并进入 Loading */
+  private ensureTagsForCategoriesLoaded(): boolean {
+    const cats = getCategories();
+    if (!cats.length) return true;
+
+    const have = new Set(this.allTags.map((t) => String(t.id())));
+    const need: string[] = [];
+    for (const g of cats) {
+      for (const id of g.tagIds || []) {
+        const key = String(id);
+        if (!have.has(key)) need.push(key);
+      }
+    }
+    if (!need.length) return true;
+
+    // 进入一次 Loading，补拉后重绘
+    if (!this.loading) {
+      this.loading = true;
+      this.fetchAllTags().finally(() => { this.loading = false; m.redraw(); });
+    }
+    return false;
+  }
+
   content() {
-    if (this.loading) return <div className="Modal-body"><LoadingIndicator /></div>;
+    // 若分类中仍有未加载的 tag，先显示 Loading
+    if (!this.ensureTagsForCategoriesLoaded() || this.loading) {
+      return <div className="Modal-body"><LoadingIndicator /></div>;
+    }
 
     const { tagSlugs: selectedSlugs } = parseQ(getCurrentQ());
     const selectedSet = new Set(selectedSlugs);
@@ -128,7 +165,7 @@ export default class TagFilterModal extends Modal {
       ];
     }
 
-    // 无分类：扁平回退
+    // —— 无分组：扁平回退 ——
     const header = this.renderHeader(selectedSlugs);
     const flat = sortTags(visible.slice());
     return [
@@ -151,16 +188,13 @@ export default class TagFilterModal extends Modal {
       this.navigateWithQ(cleared);
     };
 
-    // ★ 根据 slug 还原已选 Tag 实体（用于彩色芯片反馈）
+    // 选中反馈（彩色芯片，描述已在 CSS 隐藏）
     const bySlug = new Map(this.allTags.map((t) => [t.slug()!, t]));
-    const selectedTags = selectedSlugs
-      .map((s) => bySlug.get(s))
-      .filter(Boolean) as import('flarum/tags/common/models/Tag').default[];
+    const selectedTags = selectedSlugs.map((s) => bySlug.get(s)).filter(Boolean) as Tag[];
 
     return (
       <div className="Modal-body">
         <div className="Form">
-          {/* 搜索框 */}
           <div className="Form-group">
             <input
               className="FormControl"
@@ -168,8 +202,6 @@ export default class TagFilterModal extends Modal {
               bidi={this.filter}
             />
           </div>
-
-          {/* 工具按钮区 */}
           <div className="Form-group">
             <Button type="button" className="Button" icon="fas fa-eraser" onclick={clearAll} disabled={!selectedSlugs.length}>
               {app.translator.trans('lady-byron-tag-filter.forum.toolbar.clear')}
@@ -186,23 +218,17 @@ export default class TagFilterModal extends Modal {
             ) : null}
           </div>
 
-          {/* ★ 已选择标签反馈区：有则显示芯片，可点击移除；无则显示提示 */}
           <div className="Form-group">
             {selectedTags.length ? (
               <div className="lbtc-tf-GroupBody">
                 {selectedTags.map((t) =>
-                  // 复用 TagChip，保持原有“彩色+图标+紧密”外观
                   TagChip(t, {
                     selected: true,
-                    onclick: () => this.toggleSelect(t.slug()!), // 点击即移除该 tag
+                    onclick: () => this.toggleSelect(t.slug()!),
                   })
                 )}
               </div>
-            ) : (
-              <div className="HelpText">
-                {app.translator.trans('lady-byron-tag-filter.forum.toolbar.hint')}
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -223,7 +249,6 @@ export default class TagFilterModal extends Modal {
   }
 
   private navigateWithQ(q: string) {
-    // 跳到首页并携带 q
     m.route.set(app.route('index', q ? { q } : {}));
     this.hide();
   }
