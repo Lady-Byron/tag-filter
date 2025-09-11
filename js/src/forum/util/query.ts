@@ -1,11 +1,12 @@
-import m from 'mithril';
+import app from 'flarum/forum/app';
 
 /**
  * 解析/合成 Flarum 的 q 参数，保留 tag: 语义
  * 约定：tag: 后接 slug（与路由一致）
  */
 export function getCurrentQ(): string {
-  return (m.route.param('q') as string) || '';
+  const p = (app.search && typeof app.search.params === 'function') ? app.search.params() : {};
+  return (p?.q as string) || '';
 }
 
 export function parseQ(q: string): { rest: string; tagSlugs: string[] } {
