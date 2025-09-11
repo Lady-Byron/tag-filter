@@ -151,9 +151,16 @@ export default class TagFilterModal extends Modal {
       this.navigateWithQ(cleared);
     };
 
+    // ★ 根据 slug 还原已选 Tag 实体（用于彩色芯片反馈）
+    const bySlug = new Map(this.allTags.map((t) => [t.slug()!, t]));
+    const selectedTags = selectedSlugs
+      .map((s) => bySlug.get(s))
+      .filter(Boolean) as import('flarum/tags/common/models/Tag').default[];
+
     return (
       <div className="Modal-body">
         <div className="Form">
+          {/* 搜索框 */}
           <div className="Form-group">
             <input
               className="FormControl"
@@ -161,6 +168,8 @@ export default class TagFilterModal extends Modal {
               bidi={this.filter}
             />
           </div>
+
+          {/* 工具按钮区 */}
           <div className="Form-group">
             <Button type="button" className="Button" icon="fas fa-eraser" onclick={clearAll} disabled={!selectedSlugs.length}>
               {app.translator.trans('lady-byron-tag-filter.forum.toolbar.clear')}
@@ -175,6 +184,25 @@ export default class TagFilterModal extends Modal {
                 </Button>
               </>
             ) : null}
+          </div>
+
+          {/* ★ 已选择标签反馈区：有则显示芯片，可点击移除；无则显示提示 */}
+          <div className="Form-group">
+            {selectedTags.length ? (
+              <div className="lbtc-tf-GroupBody">
+                {selectedTags.map((t) =>
+                  // 复用 TagChip，保持原有“彩色+图标+紧密”外观
+                  TagChip(t, {
+                    selected: true,
+                    onclick: () => this.toggleSelect(t.slug()!), // 点击即移除该 tag
+                  })
+                )}
+              </div>
+            ) : (
+              <div className="HelpText">
+                {app.translator.trans('lady-byron-tag-filter.forum.toolbar.hint')}
+              </div>
+            )}
           </div>
         </div>
       </div>
