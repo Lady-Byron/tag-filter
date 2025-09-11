@@ -1,4 +1,4 @@
-/* 分组列表（保持紧凑） */
+/* === 分组列表布局（尽量低侵入） === */
 .lbtc-tf-GroupList { list-style: none; margin: 0; padding: 0; }
 .lbtc-tf-GroupHeader {
   display: flex; align-items: center; cursor: pointer;
@@ -8,44 +8,60 @@
 .lbtc-tf-GroupHeader.collapsed .lbtc-tf-GroupHeader-caret { transform: rotate(-90deg); }
 .lbtc-tf-GroupBody { display: flex; flex-wrap: wrap; gap: 6px 8px; }
 
-/* 紧密彩色芯片：限制最大宽度，名称一行省略号 */
+/* === 芯片：限制宽度 + 省略号 === */
+/* 可按需调整最大宽度（ch 基于字符宽） */
+:root {
+  --lbtc-tf-chip-max: 20ch;      /* 默认最大宽度（中小屏） */
+  --lbtc-tf-chip-max-lg: 26ch;   /* 大屏最大宽度 */
+}
+
 .lbtc-tf-Chip.Button {
-  display: inline-flex; align-items: center;
-  width: auto; max-width: clamp(120px, 28ch, 260px);   /* ★ 控制芯片最长 */
+  display: inline-flex; align-items: center; vertical-align: top;
+  width: auto; max-width: var(--lbtc-tf-chip-max);
   margin: 2px; padding: 6px 10px; line-height: 1.25;
   border-radius: 10px;
   border: 1px solid var(--tag-title-color, var(--tag-color));
   background: transparent;
-  vertical-align: top;
+}
+@media (min-width: 1100px) {
+  .lbtc-tf-Modal .lbtc-tf-Chip.Button { max-width: var(--lbtc-tf-chip-max-lg); }
 }
 
-.lbtc-tf-Chip .Button-label {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-}
-
+.lbtc-tf-Chip .Button-label { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .lbtc-tf-Chip .SelectTagListItem-icon { flex: 0 0 auto; margin-right: 2px; }
 
-/* 名称用常规着色，保证省略号可见 */
+/* === 名称一行省略；始终使用彩色（包括 .is-selected 态） === */
 .lbtc-tf-Chip .SelectTagListItem-name {
   flex: 1 1 auto; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: var(--tag-title-color, var(--tag-color)) !important;
 }
+.lbtc-tf-Chip.Button.is-selected .SelectTagListItem-name {
+  color: var(--tag-title-color, var(--tag-color)) !important; /* 防止主题覆盖 */
+}
 
-/* 描述默认隐藏，避免拉长；大屏再显示（同样省略） */
+/* 图标同色（包含选中态/勾号以外的图标） */
+.lbtc-tf-Chip .SelectTagListItem-tagIcon,
+.lbtc-tf-Chip.Button.is-selected .SelectTagListItem-tagIcon {
+  color: var(--tag-title-color, var(--tag-color)) !important;
+}
+
+/* 选中对勾 */
+.lbtc-tf-Chip .SelectTagListItem-checkIcon { color: #111; text-shadow: 0 0 2px rgba(255,255,255,.5); }
+
+/* 描述：默认隐藏，避免拉长；大屏再显示（同样省略） */
 .lbtc-tf-Chip .SelectTagListItem-description { display: none; }
-
 @media (min-width: 1100px) {
   .lbtc-tf-Modal .lbtc-tf-Chip .SelectTagListItem-description {
     display: inline;
     max-width: 12ch;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     margin-left: .5em; opacity: .75;
+    color: var(--tag-title-color, var(--tag-color));
   }
-  .lbtc-tf-Modal .lbtc-tf-Chip.Button { max-width: clamp(140px, 32ch, 320px); }
 }
 
-/* 若你仍希望“图标用裁剪着色”的视觉，可保留这段 */
+/* 若你仍喜欢“图标文字裁剪着色”的细节，可保留这段对内嵌 icon-font 的处理 */
 .lbtc-tf-Chip .SelectTagListItem-name > .icon::before {
   background: var(--tag-title-color, var(--tag-color));
   -webkit-background-clip: text; background-clip: text;
