@@ -1,0 +1,32 @@
+{
+  "name": "lady-byron/tag-filter",
+  "description": "Toolbar tag filter with grouped view when lady-byron/tag-categories is enabled. Keeps tags-filter UI/behavior.",
+  "type": "flarum-extension",
+  "license": "MIT",
+  "require": {
+    "flarum/core": "^1.8",
+    "flarum/tags": "^1.8"
+  },
+  "suggest": {
+    "lady-byron/tag-categories": "Provides forum.tagCategories for grouped view (optional)."
+  },
+  "autoload": {
+    "psr-4": {
+      "LadyByron\\TagFilter\\": "src/"
+    }
+  },
+  "extra": {
+    "flarum-extension": {
+      "id": "lady-byron-tag-filter",
+      "title": "Tag Filter (Grouped)",
+      "category": "feature",
+      "icon": {
+        "name": "fas fa-filter",
+        "backgroundColor": "#6941C6",
+        "color": "#ffffff"
+      }
+    }
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}
