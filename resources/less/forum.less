@@ -1,4 +1,4 @@
-/* 分组列表新样式（尽量低侵入） */
+/* 分组列表（保持紧凑） */
 .lbtc-tf-GroupList { list-style: none; margin: 0; padding: 0; }
 .lbtc-tf-GroupHeader {
   display: flex; align-items: center; cursor: pointer;
@@ -8,34 +8,49 @@
 .lbtc-tf-GroupHeader.collapsed .lbtc-tf-GroupHeader-caret { transform: rotate(-90deg); }
 .lbtc-tf-GroupBody { display: flex; flex-wrap: wrap; gap: 6px 8px; }
 
-/* 复刻“紧密彩色芯片” */
+/* 紧密彩色芯片：限制最大宽度，名称一行省略号 */
 .lbtc-tf-Chip.Button {
-  display: inline-block;
-  width: fit-content;
-  margin: 2px;
-  padding: 4px 12px;
-  border-radius: 8px;
+  display: inline-flex; align-items: center;
+  width: auto; max-width: clamp(120px, 28ch, 260px);   /* ★ 控制芯片最长 */
+  margin: 2px; padding: 6px 10px; line-height: 1.25;
+  border-radius: 10px;
   border: 1px solid var(--tag-title-color, var(--tag-color));
   background: transparent;
+  vertical-align: top;
 }
 
-/* 彩色文字（背景裁剪） */
-.lbtc-tf-Chip .SelectTagListItem-name,
+.lbtc-tf-Chip .Button-label {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+}
+
+.lbtc-tf-Chip .SelectTagListItem-icon { flex: 0 0 auto; margin-right: 2px; }
+
+/* 名称用常规着色，保证省略号可见 */
+.lbtc-tf-Chip .SelectTagListItem-name {
+  flex: 1 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--tag-title-color, var(--tag-color)) !important;
+}
+
+/* 描述默认隐藏，避免拉长；大屏再显示（同样省略） */
+.lbtc-tf-Chip .SelectTagListItem-description { display: none; }
+
+@media (min-width: 1100px) {
+  .lbtc-tf-Modal .lbtc-tf-Chip .SelectTagListItem-description {
+    display: inline;
+    max-width: 12ch;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-left: .5em; opacity: .75;
+  }
+  .lbtc-tf-Modal .lbtc-tf-Chip.Button { max-width: clamp(140px, 32ch, 320px); }
+}
+
+/* 若你仍希望“图标用裁剪着色”的视觉，可保留这段 */
 .lbtc-tf-Chip .SelectTagListItem-name > .icon::before {
   background: var(--tag-title-color, var(--tag-color));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent !important;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent !important; -webkit-text-fill-color: transparent;
 }
 
-.lbtc-tf-Chip .SelectTagListItem-description {
-  display: inline;
-  margin-left: .25em;
-  opacity: .8;
-}
-
-.lbtc-tf-Chip .SelectTagListItem-icon { margin-right: 6px; }
-.lbtc-tf-Chip .SelectTagListItem-checkIcon { color: #111; text-shadow: 0 0 2px rgba(255,255,255,.5); }
-
-/* 弹层容器微调（保持与原样式贴近） */
+/* 弹层容器微调 */
 .lbtc-tf-Modal .Modal-body { padding-top: 10px; }
