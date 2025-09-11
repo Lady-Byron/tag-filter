@@ -6,5 +6,6 @@ lady-byron-tag-filter:
       clear: 清空
       expand_all: 全部展开
       collapse_all: 全部折叠
+      hint: 在这里搜索标签，点击下方彩色标签可取消选择
     grouped:
       ungrouped: 未分组
