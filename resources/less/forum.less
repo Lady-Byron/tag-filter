@@ -35,4 +35,12 @@
 .lbtc-tf-ToolbarTag {
   color: var(--tag-title-color, var(--tag-color)) !important;
   font-weight: 600;
+
+/* 仅针对本扩展的 Modal，保证动画事件一定触发且非常短 */
+.lbtc-tf-Modal .Modal-backdrop,
+.lbtc-tf-Modal .Modal-content {
+  animation-duration: 0.001s !important;
+  animation-iteration-count: 1 !important;
+}
+
 }
