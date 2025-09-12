@@ -8,12 +8,15 @@ import { warmupTags, ensureCategoryTagsLoaded } from './util/tags';
 
 const EXT_ID = 'lady-byron-tag-filter';
 
-/* ========= 滚动恢复（移动端友好 & 温和预取，不滚到底部） ========= */
+/* ==================== 滚动恢复（仅“返回”触发） ==================== */
 type SavedState = {
   y: number;     // 离开时 scrollY（兜底）
-  href?: string; // 视口最上方帖子的链接（用于精确定位）
+  href?: string; // 视口最上方帖子的链接（锚点）
   id?: string;   // 视口最上方帖子的 data-id（可选）
+  ts: number;    // 保存时间戳（用于过期）
 };
+
+const SAVE_TTL_MS = 10 * 60 * 1000; // 10 分钟内有效
 
 function getRouteKey(): string {
   try {
@@ -25,6 +28,7 @@ function getRouteKey(): string {
 function storageKey(): string {
   return `lbtc:scroll:${getRouteKey()}`;
 }
+
 function headerOffsetGuess(): number {
   const el = document.querySelector('.App-header, .Header, header') as HTMLElement | null;
   return el ? Math.max(0, el.getBoundingClientRect().height - 4) : 0;
@@ -38,7 +42,7 @@ function saveCurrentState() {
       document.body?.scrollTop ||
       0;
 
-    // 抓“视口最上方”的列表项（作为锚点）
+    // 找“视口最上方”的列表项
     let topEl: HTMLElement | null = null;
     const items = Array.from(document.querySelectorAll<HTMLElement>('li.DiscussionListItem'));
     let minPos = Infinity;
@@ -62,7 +66,7 @@ function saveCurrentState() {
       href = a?.getAttribute('href') || undefined;
     }
 
-    const state: SavedState = { y, href, id };
+    const state: SavedState = { y, href, id, ts: Date.now() };
     sessionStorage.setItem(storageKey(), JSON.stringify(state));
   } catch {}
 }
@@ -72,7 +76,9 @@ function parseSaved(): SavedState | null {
     const raw = sessionStorage.getItem(storageKey());
     if (!raw) return null;
     const s = JSON.parse(raw) as SavedState;
-    return typeof s?.y === 'number' ? s : null;
+    if (typeof s?.y !== 'number' || typeof s?.ts !== 'number') return null;
+    if (Date.now() - s.ts > SAVE_TTL_MS) return null;
+    return s;
   } catch {
     return null;
   }
@@ -97,11 +103,15 @@ function findTargetElement(state: SavedState): HTMLElement | null {
   return null;
 }
 
-/** 等高度足够再滚到 y；最大等待时长更宽松，适配移动端慢速渲染 */
+/** 等高度足够再滚到 y；不触发额外加载，不会“拉到底” */
 function restoreScrollSafely(y: number, maxMs = 5000) {
   const start = performance.now();
   const step = () => {
-    const h = document.documentElement?.scrollHeight || document.body?.scrollHeight || 0;
+    const doc = document.documentElement || document.body;
+    const h = doc.scrollHeight || 0;
+    const maxY = Math.max(0, h - window.innerHeight);
+    // 若目标大于可滚动最大值，直接放弃（不滚到底）
+    if (y > maxY) return;
     if (h > y + 50 || performance.now() - start > maxMs) {
       requestAnimationFrame(() => window.scrollTo(0, y));
     } else {
@@ -111,15 +121,15 @@ function restoreScrollSafely(y: number, maxMs = 5000) {
   step();
 }
 
-/** 温和预取：不滚动，只在 state 可用时调用 loadMore() 少量次，直到锚点出现或超时 */
-async function gentlePrefetchUntilVisible(saved: SavedState, pageLimit = 8, maxMs = 5000) {
+/** 温和预取：仅在“返回”时用于让锚点出现；不滚动页面 */
+async function gentlePrefetchUntilVisible(saved: SavedState, pageLimit = 6, maxMs = 4000) {
   const start = performance.now();
   const state: any = (app as any).discussions;
   if (!state || typeof state.loadMore !== 'function') return false;
 
   for (let i = 0; i < pageLimit; i++) {
     if (findTargetElement(saved)) return true;
-    if (!(state.moreResults || state.hasMoreResults || state.next)) break; // 兼容不同实现
+    if (!(state.moreResults || state.hasMoreResults || state.next)) break;
     if (state.loading) {
       await new Promise((r) => setTimeout(r, 80));
       i--;
@@ -139,11 +149,11 @@ async function gentlePrefetchUntilVisible(saved: SavedState, pageLimit = 8, maxM
 async function restoreScroll(saved: SavedState) {
   const offset = headerOffsetGuess();
 
-  // 1) 先尝试“锚点精确定位”
+  // 1) 优先锚点
   let target = findTargetElement(saved);
   if (!target) {
-    // 2) 锚点不在当前 DOM：温和预取若干页（不滚动、不抖动）
-    const ok = await gentlePrefetchUntilVisible(saved, 8, 5000);
+    // 2) “返回”场景下，温和预取一些数据让锚点出现（不滚动页面）
+    const ok = await gentlePrefetchUntilVisible(saved, 6, 4000);
     if (ok) target = findTargetElement(saved);
   }
   if (target) {
@@ -152,14 +162,34 @@ async function restoreScroll(saved: SavedState) {
     return;
   }
 
-  // 3) 仍找不到锚点：回退到 y（等待高度就绪），不强制触发加载
+  // 3) 找不到锚点时，仅在 y 合法时恢复；否则放弃（避免被拉到底）
+  const doc = document.documentElement || document.body;
+  const maxY = Math.max(0, (doc.scrollHeight || 0) - window.innerHeight);
   const wantY = Math.max(0, (saved.y || 0) - offset);
-  restoreScrollSafely(wantY, 5000);
+  if (wantY <= maxY) restoreScrollSafely(wantY, 5000);
 }
 
-/* ========= 初始化（保留原功能 + 安全挂钩） ========= */
+/* ============== 仅“返回”时尝试恢复：导航意图探测 ============== */
+// 全局标记：是否属于“返回”导航
+(function installBackNavDetector() {
+  // popstate：浏览器后退/前进（SPA 场景）
+  window.addEventListener('popstate', () => {
+    (window as any).__lbtcShouldRestore = true;
+  });
+  // pageshow.persisted：bfcache 恢复（iOS/Safari 等）
+  window.addEventListener('pageshow', (e: PageTransitionEvent) => {
+    if ((e as any).persisted) {
+      (window as any).__lbtcShouldRestore = true;
+    }
+  });
+  // 初始为 false；整页刷新不会触发以上两个事件，因而不会恢复
+  if ((window as any).__lbtcShouldRestore === undefined) {
+    (window as any).__lbtcShouldRestore = false;
+  }
+})();
+
+/* ==================== 原有功能（按钮/弹窗） ==================== */
 app.initializers.add(EXT_ID, () => {
-  /* 工具栏按钮（原样保持） */
   function toolbarLabel(): Mithril.Children {
     const q =
       app.search && typeof (app.search as any).params === 'function'
@@ -224,8 +254,8 @@ app.initializers.add(EXT_ID, () => {
     );
   });
 
-  /* ========== 列表页滚动恢复挂载（移动端增强） ========== */
-  // 1) 关闭 Page 的“切页置顶/浏览器内部还原”，交给我们托管（避免与系统半自动还原打架）
+  /* ============== 列表页挂载（仅“返回”才恢复） ============== */
+  // 关闭 Page 默认“切页置顶/浏览器内部还原”，由我们在“返回”场景托管
   extend(IndexPage.prototype as any, 'oninit', function () {
     try {
       (this as any).scrollTopOnCreate = false;
@@ -233,38 +263,46 @@ app.initializers.add(EXT_ID, () => {
     } catch {}
   });
 
-  // 2) 挂载后尝试恢复（一次性）
+  // “返回”时恢复（一次性）；刷新/直达不恢复
   extend(IndexPage.prototype as any, 'oncreate', function () {
     try {
+      if ((window as any).__lbtcShouldRestore !== true) return;
       const key = storageKey();
       if ((window as any).__lbtcRestoredKey === key) return;
       const saved = parseSaved();
       if (saved) {
         (window as any).__lbtcRestoredKey = key;
+        (window as any).__lbtcShouldRestore = false;
         restoreScroll(saved);
+      } else {
+        (window as any).__lbtcShouldRestore = false;
       }
     } catch {}
   });
 
-  // 3) 某些移动端/慢网下，列表异步更新较慢：在 onupdate 再尝试一次（若之前未成功）
+  // 慢渲染时在 onupdate 再试一次（仍仅“返回”触发）
   extend(IndexPage.prototype as any, 'onupdate', function () {
     try {
+      if ((window as any).__lbtcShouldRestore !== true) return;
       const key = storageKey();
       if ((window as any).__lbtcRestoredKey === key) return;
       const saved = parseSaved();
       if (saved) {
         (window as any).__lbtcRestoredKey = key;
+        (window as any).__lbtcShouldRestore = false;
         restoreScroll(saved);
+      } else {
+        (window as any).__lbtcShouldRestore = false;
       }
     } catch {}
   });
 
-  // 4) 离开时保存当前位置（含锚点）
+  // 离开时保存位置（含锚点）
   extend(IndexPage.prototype as any, 'onremove', function () {
     saveCurrentState();
   });
 
-  // 5) 保险：在“pointerdown/click”捕获阶段先保存（移动端更可靠）
+  // 提前保存（移动端更稳定）：pointerdown/click 捕获阶段
   if (!(window as any).__lbtcScrollGuardInstalled) {
     (window as any).__lbtcScrollGuardInstalled = true;
     const handler = (ev: Event) => {
@@ -275,22 +313,4 @@ app.initializers.add(EXT_ID, () => {
     document.addEventListener('pointerdown', handler, { capture: true, passive: true });
     document.addEventListener('click', handler, { capture: true, passive: true });
   }
-
-  // 6) 处理 iOS 等系统 bfcache 恢复场景（整页从缓存回到前台）
-  window.addEventListener('pageshow', (e: any) => {
-    try {
-      // 只有回到列表路由时才尝试
-      const isIndex = String((window as any).m?.route?.get?.() || location.pathname).match(/^\/(?:\?.*)?$/);
-      if (!isIndex) return;
-
-      const key = storageKey();
-      if ((window as any).__lbtcRestoredKey === key) return;
-
-      const saved = parseSaved();
-      if (saved) {
-        (window as any).__lbtcRestoredKey = key;
-        restoreScroll(saved);
-      }
-    } catch {}
-  });
 });
