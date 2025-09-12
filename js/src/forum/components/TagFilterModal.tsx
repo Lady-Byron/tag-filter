@@ -25,10 +25,9 @@ export default class TagFilterModal extends Modal {
 
   // 本地选择集（实时应用，不关闭弹窗）
   private localSelected = new Set<string>();
-  // 打开时保留的其它关键词（非 tag: 片段）
+  // 打开时保留的非 tag: 关键词
   private initialRest = '';
-
-  // 防抖：频繁点击时合并更新
+  // 防抖
   private applyTimer: number | null = null;
 
   className() { return 'lbtc-tf-Modal Modal--large'; }
@@ -46,7 +45,7 @@ export default class TagFilterModal extends Modal {
 
   oncreate(vnode: Mithril.VnodeDOM) {
     super.oncreate(vnode);
-    // 保证 X 为按钮并直连关闭
+    // 保证 X 永远能关
     const closeBtn = this.element?.querySelector<HTMLButtonElement>('.Modal-close');
     if (closeBtn) {
       if (!closeBtn.getAttribute('type')) closeBtn.setAttribute('type', 'button');
@@ -54,9 +53,7 @@ export default class TagFilterModal extends Modal {
     }
   }
 
-  onremove() {
-    if (this.applyTimer) { clearTimeout(this.applyTimer); this.applyTimer = null; }
-  }
+  onremove() { if (this.applyTimer) { clearTimeout(this.applyTimer); this.applyTimer = null; } }
 
   onsubmit(e: SubmitEvent) { e.preventDefault(); }
 
@@ -212,15 +209,16 @@ export default class TagFilterModal extends Modal {
               </Button>
               {expandAll && collapseAll ? (
                 <>
-                  <Button type="button" className="Button" onclick={expandAll}>
+                  <Button type="button" className="Button" icon="fas fa-angle-down" onclick={expandAll}>
                     {app.translator.trans('lady-byron-tag-filter.forum.toolbar.expand_all')}
                   </Button>
-                  <Button type="button" className="Button" onclick={collapseAll}>
+                  <Button type="button" className="Button" icon="fas fa-angle-up" onclick={collapseAll}>
                     {app.translator.trans('lady-byron-tag-filter.forum.toolbar.collapse_all')}
                   </Button>
                 </>
               ) : null}
-              <Button type="button" className="Button Button--primary" onclick={() => app.modal.close()}>
+              {/* 统一外观：与其它按钮同色，同样带图标 */}
+              <Button type="button" className="Button" icon="fas fa-check" onclick={() => app.modal.close()}>
                 {app.translator.trans('lady-byron-tag-filter.forum.toolbar.done')}
               </Button>
             </div>
@@ -256,30 +254,29 @@ export default class TagFilterModal extends Modal {
     m.redraw();
   }
 
-  /** 核心：不跳路由，直接更新搜索状态（有则用 API，无则降级 route.replace） */
+  /** 核心：用讨论列表状态刷新，不走路由；再用 history.replaceState 同步 URL */
   private applyNow(opts: { debounce?: number } = {}) {
     const q = stringifyQ({ rest: this.initialRest, tagSlugs: Array.from(this.localSelected) });
+    const wait = opts.debounce ?? 120;
 
     const doApply = () => {
-      const s: any = (app as any).search;
-
-      // 优先使用搜索状态 API（不会关闭弹窗）
-      if (s?.updateParams) {
-        s.updateParams({ q });
-      } else if (s?.search) {
-        // 一些版本上是 search(text)
-        s.search(q);
-      } else {
-        // 最后兜底：用路由替换（可能会导致关闭；仅当上面 API 不存在时）
-        const params = m.route.param();
-        if (q) params.q = q; else delete params.q;
-        const url = app.route('index', params);
-        // @ts-ignore
-        m.route.set(url, undefined, { replace: true });
+      // 1) 刷新列表（不触发路由，弹窗不会被关闭）
+      const dl: any = (app as any).discussions;
+      if (dl?.refreshParams) {
+        dl.refreshParams({ q });
       }
+
+      // 2) 同步地址栏但不触发 mithril 路由
+      const params = m.route.param();
+      if (q) params.q = q; else delete params.q;
+      const url = app.route('index', params);
+      try { window.history.replaceState(null, '', url); } catch {}
+
+      // 3) 可选：更新搜索条文本（如果存在）
+      const s: any = (app as any).search;
+      if (s?.setText) s.setText(q);
     };
 
-    const wait = opts.debounce ?? 150;
     if (this.applyTimer) clearTimeout(this.applyTimer);
     this.applyTimer = window.setTimeout(() => {
       this.applyTimer = null;
