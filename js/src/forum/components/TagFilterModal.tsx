@@ -9,7 +9,7 @@ import type Tag from 'flarum/tags/common/models/Tag';
 
 import TagChip from './TagChip';
 import { getCategories, pickTagsInCategories, loadCollapsed, saveCollapsed } from '../util/categories';
-import { getCurrentQ, parseQ, stringifyQ, toggleTagSlug, clearTagsInQ } from '../util/query';
+import { getCurrentQ, parseQ, stringifyQ } from '../util/query';
 
 type Vnode = Mithril.Vnode<Record<string, never>, TagFilterModal>;
 
@@ -23,8 +23,13 @@ export default class TagFilterModal extends Modal {
   private collapsed: Record<string, boolean> = {};
   private initialized = false;
 
-  // ★ 新增：路由更新防抖定时器（连续点选时只跳一次）
-  private navTimer: number | null = null;
+  // 本地选择集（实时应用，不关闭弹窗）
+  private localSelected = new Set<string>();
+  // 打开时保留的其它关键词（非 tag: 片段）
+  private initialRest = '';
+
+  // 防抖：频繁点击时合并更新
+  private applyTimer: number | null = null;
 
   className() { return 'lbtc-tf-Modal Modal--large'; }
   title() { return app.translator.trans('lady-byron-tag-filter.forum.toolbar.button'); }
@@ -33,11 +38,15 @@ export default class TagFilterModal extends Modal {
     super.oninit(vnode);
     this.collapsed = loadCollapsed();
     this.allTags = app.store.all<Tag>('tags');
+
+    const { rest, tagSlugs } = parseQ(getCurrentQ());
+    this.initialRest = rest;
+    this.localSelected = new Set(tagSlugs);
   }
 
   oncreate(vnode: Mithril.VnodeDOM) {
     super.oncreate(vnode);
-    // 确保 X 是按钮并直连全局关闭
+    // 保证 X 为按钮并直连关闭
     const closeBtn = this.element?.querySelector<HTMLButtonElement>('.Modal-close');
     if (closeBtn) {
       if (!closeBtn.getAttribute('type')) closeBtn.setAttribute('type', 'button');
@@ -46,18 +55,13 @@ export default class TagFilterModal extends Modal {
   }
 
   onremove() {
-    if (this.navTimer) { clearTimeout(this.navTimer); this.navTimer = null; }
+    if (this.applyTimer) { clearTimeout(this.applyTimer); this.applyTimer = null; }
   }
 
   onsubmit(e: SubmitEvent) { e.preventDefault(); }
 
   content() {
-    if (!this.allTags.length) {
-      return <div className="Modal-body"><LoadingIndicator /></div>;
-    }
-
-    const { tagSlugs: selectedSlugs } = parseQ(getCurrentQ());
-    const selectedSet = new Set(selectedSlugs);
+    if (!this.allTags.length) return <div className="Modal-body"><LoadingIndicator /></div>;
 
     const keyword = (this.filter() || '').trim().toLowerCase();
     const visible = keyword
@@ -79,7 +83,7 @@ export default class TagFilterModal extends Modal {
       const expandAll = () => { cats.forEach((g) => (this.collapsed[String(g.id)] = false)); this.collapsed.__ungrouped__ = false; saveCollapsed(this.collapsed); m.redraw(); };
       const collapseAll = () => { cats.forEach((g) => (this.collapsed[String(g.id)] = true));  this.collapsed.__ungrouped__ = true;  saveCollapsed(this.collapsed); m.redraw(); };
 
-      const header = this.renderHeader(selectedSlugs, expandAll, collapseAll);
+      const header = this.renderHeader(expandAll, collapseAll);
       const sections: Mithril.Children[] = [];
 
       grouped.forEach(({ group, tags }) => {
@@ -94,8 +98,8 @@ export default class TagFilterModal extends Modal {
             role="button"
             aria-expanded={!isCollapsed}
             tabindex="0"
-            onclick={() => this.toggle(key)}
-            onkeydown={(e: KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), this.toggle(key))}
+            onclick={() => this.toggleGroup(key)}
+            onkeydown={(e: KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), this.toggleGroup(key))}
           >
             <i className="fas fa-chevron-down lbtc-tf-GroupHeader-caret" />
             {group.name}
@@ -108,8 +112,8 @@ export default class TagFilterModal extends Modal {
               {sorted.map((t) => (
                 <span key={`t-${t.id()}`} style={{ display: 'contents' }}>
                   {TagChip(t, {
-                    selected: selectedSet.has(t.slug()!),
-                    onclick: () => this.toggleSelect(t.slug()!), // ★ 不关闭，仅更新路由（防抖）
+                    selected: this.localSelected.has(t.slug()!),
+                    onclick: () => this.toggleLocalAndApply(t.slug()!), // ★ 实时应用，不关闭
                   })}
                 </span>
               ))}
@@ -130,8 +134,8 @@ export default class TagFilterModal extends Modal {
             role="button"
             aria-expanded={!isCollapsed}
             tabindex="0"
-            onclick={() => this.toggle(key)}
-            onkeydown={(e: KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), this.toggle(key))}
+            onclick={() => this.toggleGroup(key)}
+            onkeydown={(e: KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), this.toggleGroup(key))}
           >
             <i className="fas fa-chevron-down lbtc-tf-GroupHeader-caret" />
             {app.translator.trans('lady-byron-tag-filter.forum.grouped.ungrouped')}
@@ -144,8 +148,8 @@ export default class TagFilterModal extends Modal {
               {sorted.map((t) => (
                 <span key={`t-${t.id()}`} style={{ display: 'contents' }}>
                   {TagChip(t, {
-                    selected: selectedSet.has(t.slug()!),
-                    onclick: () => this.toggleSelect(t.slug()!),
+                    selected: this.localSelected.has(t.slug()!),
+                    onclick: () => this.toggleLocalAndApply(t.slug()!),
                   })}
                 </span>
               ))}
@@ -163,7 +167,7 @@ export default class TagFilterModal extends Modal {
     }
 
     // —— 无分组回退 ——
-    const header = this.renderHeader(selectedSlugs);
+    const header = this.renderHeader();
     const flat = sortTags(visible.slice());
     return [
       header,
@@ -172,8 +176,8 @@ export default class TagFilterModal extends Modal {
           {flat.map((t) => (
             <span key={`flat-${t.id()}`} style={{ display: 'contents' }}>
               {TagChip(t, {
-                selected: selectedSet.has(t.slug()!),
-                onclick: () => this.toggleSelect(t.slug()!),
+                selected: this.localSelected.has(t.slug()!),
+                onclick: () => this.toggleLocalAndApply(t.slug()!),
               })}
             </span>
           ))}
@@ -182,15 +186,13 @@ export default class TagFilterModal extends Modal {
     ];
   }
 
-  private renderHeader(selectedSlugs: string[], expandAll?: () => void, collapseAll?: () => void) {
-    const clearAll = () => {
-      const q = getCurrentQ();
-      const cleared = stringifyQ(clearTagsInQ(q));
-      this.navigateWithQ(cleared, { close: false }); // ★ 清空后保持弹窗打开
-    };
+  /** 头部：搜索框 + 控制按钮 + 已选反馈（基于 localSelected） */
+  private renderHeader(expandAll?: () => void, collapseAll?: () => void) {
+    const clearLocal = () => { this.localSelected.clear(); this.applyNow({ debounce: 0 }); m.redraw(); };
 
+    // 已选反馈
     const bySlug = new Map(this.allTags.map((t) => [t.slug()!, t]));
-    const selectedTags = selectedSlugs.map((s) => bySlug.get(s)).filter(Boolean) as Tag[];
+    const selectedTags = Array.from(this.localSelected).map((s) => bySlug.get(s)).filter(Boolean) as Tag[];
 
     return (
       <div className="Modal-body">
@@ -200,40 +202,37 @@ export default class TagFilterModal extends Modal {
               className="FormControl"
               placeholder={app.translator.trans('lady-byron-tag-filter.forum.toolbar.placeholder')}
               bidi={this.filter}
+              oninput={() => m.redraw()}
             />
           </div>
           <div className="Form-group">
-            <Button type="button" className="Button" icon="fas fa-eraser" onclick={clearAll} disabled={!selectedSlugs.length}>
-              {app.translator.trans('lady-byron-tag-filter.forum.toolbar.clear')}
-            </Button>
-            {expandAll && collapseAll ? (
-              <>
-                <Button type="button" className="Button" style={{ marginLeft: '8px' }} onclick={expandAll}>
-                  {app.translator.trans('lady-byron-tag-filter.forum.toolbar.expand_all')}
-                </Button>
-                <Button type="button" className="Button" style={{ marginLeft: '8px' }} onclick={collapseAll}>
-                  {app.translator.trans('lady-byron-tag-filter.forum.toolbar.collapse_all')}
-                </Button>
-              </>
-            ) : null}
-            {/* ★ 新增：完成（仅关闭弹窗，不改变当前筛选） */}
-            <Button
-              type="button"
-              className="Button Button--primary"
-              style={{ marginLeft: '8px' }}
-              onclick={() => app.modal.close()}
-            >
-              {app.translator.trans('lady-byron-tag-filter.forum.toolbar.done')}
-            </Button>
+            <div className="ButtonGroup">
+              <Button type="button" className="Button" icon="fas fa-eraser" onclick={clearLocal} disabled={!selectedTags.length}>
+                {app.translator.trans('lady-byron-tag-filter.forum.toolbar.clear')}
+              </Button>
+              {expandAll && collapseAll ? (
+                <>
+                  <Button type="button" className="Button" onclick={expandAll}>
+                    {app.translator.trans('lady-byron-tag-filter.forum.toolbar.expand_all')}
+                  </Button>
+                  <Button type="button" className="Button" onclick={collapseAll}>
+                    {app.translator.trans('lady-byron-tag-filter.forum.toolbar.collapse_all')}
+                  </Button>
+                </>
+              ) : null}
+              <Button type="button" className="Button Button--primary" onclick={() => app.modal.close()}>
+                {app.translator.trans('lady-byron-tag-filter.forum.toolbar.done')}
+              </Button>
+            </div>
           </div>
 
-          {/* 已选标签反馈 */}
+          {/* 已选标签（点可取消） */}
           <div className="Form-group">
             {selectedTags.length ? (
               <div className="lbtc-tf-GroupBody">
                 {selectedTags.map((t) =>
                   <span key={`sel-${t.id()}`} style={{ display: 'contents' }}>
-                    {TagChip(t, { selected: true, onclick: () => this.toggleSelect(t.slug()!) })}
+                    {TagChip(t, { selected: true, onclick: () => this.toggleLocalAndApply(t.slug()!) })}
                   </span>
                 )}
               </div>
@@ -244,39 +243,47 @@ export default class TagFilterModal extends Modal {
     );
   }
 
-  private toggle(key: string) {
+  private toggleGroup(key: string) {
     this.collapsed[key] = !this.collapsed[key];
     saveCollapsed(this.collapsed);
     m.redraw();
   }
 
-  private toggleSelect(slug: string) {
-    const q = getCurrentQ();
-    const { rest, tagSlugs } = parseQ(q);
-    const next = toggleTagSlug(rest, tagSlugs, slug);
-    this.navigateWithQ(stringifyQ(next), { close: false }); // ★ 不自动关闭
+  private toggleLocalAndApply(slug: string) {
+    if (this.localSelected.has(slug)) this.localSelected.delete(slug);
+    else this.localSelected.add(slug);
+    this.applyNow(); // 实时应用
+    m.redraw();
   }
 
-  /** 统一的导航：防抖更新 ?q=...；可选择是否关闭 */
-  private navigateWithQ(q: string, opts: { close?: boolean; debounce?: number; replace?: boolean } = {}) {
-    const debounce = opts.debounce ?? 250;
-    const replace = opts.replace ?? true;
+  /** 核心：不跳路由，直接更新搜索状态（有则用 API，无则降级 route.replace） */
+  private applyNow(opts: { debounce?: number } = {}) {
+    const q = stringifyQ({ rest: this.initialRest, tagSlugs: Array.from(this.localSelected) });
 
-    if (this.navTimer) clearTimeout(this.navTimer);
-    this.navTimer = window.setTimeout(() => {
-      this.navTimer = null;
-      const params = m.route.param();
-      if (q) params.q = q; else delete params.q;
-      // Mithril 支持 replace 选项，避免历史栈被频繁点选刷满
-      const url = app.route('index', params);
-      // @ts-ignore
-      m.route.set(url, undefined, replace ? { replace: true } : undefined);
+    const doApply = () => {
+      const s: any = (app as any).search;
 
-      if (opts.close) app.modal.close();
-      else m.redraw(); // 让“已选标签”区即时更新
-    }, debounce);
+      // 优先使用搜索状态 API（不会关闭弹窗）
+      if (s?.updateParams) {
+        s.updateParams({ q });
+      } else if (s?.search) {
+        // 一些版本上是 search(text)
+        s.search(q);
+      } else {
+        // 最后兜底：用路由替换（可能会导致关闭；仅当上面 API 不存在时）
+        const params = m.route.param();
+        if (q) params.q = q; else delete params.q;
+        const url = app.route('index', params);
+        // @ts-ignore
+        m.route.set(url, undefined, { replace: true });
+      }
+    };
+
+    const wait = opts.debounce ?? 150;
+    if (this.applyTimer) clearTimeout(this.applyTimer);
+    this.applyTimer = window.setTimeout(() => {
+      this.applyTimer = null;
+      doApply();
+    }, wait);
   }
-
-  /** 不再在这里关闭弹窗；关闭交给 X / 完成按钮 */
-  // private navigateWithQ(q: string) { ... 旧实现已移除 ... }
 }
