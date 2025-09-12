@@ -1,6 +1,7 @@
 lady-byron-tag-filter:
   forum:
     toolbar:
+      done: 完成
       button: 标签
       placeholder: 搜索…
       clear: 清空
