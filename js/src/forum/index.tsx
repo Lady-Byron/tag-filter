@@ -8,15 +8,17 @@ import { warmupTags, ensureCategoryTagsLoaded } from './util/tags';
 
 const EXT_ID = 'lady-byron-tag-filter';
 
-/* ==================== 滚动恢复（仅“返回”触发） ==================== */
+/* ================== 滚动恢复（仅“返回”触发，等待首屏后恢复） ================== */
 type SavedState = {
-  y: number;     // 离开时 scrollY（兜底）
-  href?: string; // 视口最上方帖子的链接（锚点）
-  id?: string;   // 视口最上方帖子的 data-id（可选）
-  ts: number;    // 保存时间戳（用于过期）
+  y: number;
+  href?: string;
+  id?: string;
+  ts: number;
 };
 
-const SAVE_TTL_MS = 10 * 60 * 1000; // 10 分钟内有效
+const SAVE_TTL_MS = 10 * 60 * 1000; // 10 分钟
+const RESTORE_MAX_MS = 6000;        // 恢复最多尝试 6s
+const PREFETCH_LIMIT = 6;           // 最多温和预取 6 页
 
 function getRouteKey(): string {
   try {
@@ -28,49 +30,40 @@ function getRouteKey(): string {
 function storageKey(): string {
   return `lbtc:scroll:${getRouteKey()}`;
 }
-
 function headerOffsetGuess(): number {
   const el = document.querySelector('.App-header, .Header, header') as HTMLElement | null;
   return el ? Math.max(0, el.getBoundingClientRect().height - 4) : 0;
 }
-
+function topListItem(): HTMLElement | null {
+  let topEl: HTMLElement | null = null;
+  const items = Array.from(document.querySelectorAll<HTMLElement>('li.DiscussionListItem'));
+  let minPos = Infinity;
+  const topEdge = headerOffsetGuess();
+  for (const li of items) {
+    const r = li.getBoundingClientRect();
+    if (r.bottom <= topEdge) continue;
+    if (r.top >= topEdge && r.top < minPos) {
+      topEl = li;
+      minPos = r.top;
+    }
+  }
+  return topEl;
+}
 function saveCurrentState() {
   try {
-    const y =
-      window.scrollY ||
-      document.documentElement?.scrollTop ||
-      document.body?.scrollTop ||
-      0;
-
-    // 找“视口最上方”的列表项
-    let topEl: HTMLElement | null = null;
-    const items = Array.from(document.querySelectorAll<HTMLElement>('li.DiscussionListItem'));
-    let minPos = Infinity;
-    const topEdge = headerOffsetGuess();
-
-    for (const li of items) {
-      const r = li.getBoundingClientRect();
-      if (r.bottom <= topEdge) continue;
-      if (r.top >= topEdge && r.top < minPos) {
-        topEl = li;
-        minPos = r.top;
-      }
-    }
-
+    const y = window.scrollY || document.documentElement?.scrollTop || document.body?.scrollTop || 0;
+    const el = topListItem();
     let href: string | undefined;
     let id: string | undefined;
-
-    if (topEl) {
-      id = topEl.getAttribute('data-id') || undefined;
-      const a = topEl.querySelector('a[href*="/d/"]') as HTMLAnchorElement | null;
+    if (el) {
+      id = el.getAttribute('data-id') || undefined;
+      const a = el.querySelector('a[href*="/d/"]') as HTMLAnchorElement | null;
       href = a?.getAttribute('href') || undefined;
     }
-
     const state: SavedState = { y, href, id, ts: Date.now() };
     sessionStorage.setItem(storageKey(), JSON.stringify(state));
   } catch {}
 }
-
 function parseSaved(): SavedState | null {
   try {
     const raw = sessionStorage.getItem(storageKey());
@@ -83,7 +76,6 @@ function parseSaved(): SavedState | null {
     return null;
   }
 }
-
 function findTargetElement(state: SavedState): HTMLElement | null {
   if (state.id) {
     const byId = document.querySelector<HTMLElement>(`li.DiscussionListItem[data-id="${state.id}"]`);
@@ -102,27 +94,21 @@ function findTargetElement(state: SavedState): HTMLElement | null {
   }
   return null;
 }
-
-/** 等高度足够再滚到 y；不触发额外加载，不会“拉到底” */
-function restoreScrollSafely(y: number, maxMs = 5000) {
-  const start = performance.now();
-  const step = () => {
-    const doc = document.documentElement || document.body;
-    const h = doc.scrollHeight || 0;
-    const maxY = Math.max(0, h - window.innerHeight);
-    // 若目标大于可滚动最大值，直接放弃（不滚到底）
-    if (y > maxY) return;
-    if (h > y + 50 || performance.now() - start > maxMs) {
-      requestAnimationFrame(() => window.scrollTo(0, y));
-    } else {
-      setTimeout(step, 60);
-    }
-  };
-  step();
+function hasAnyListItems(): boolean {
+  return document.querySelector('li.DiscussionListItem') !== null;
 }
-
-/** 温和预取：仅在“返回”时用于让锚点出现；不滚动页面 */
-async function gentlePrefetchUntilVisible(saved: SavedState, pageLimit = 6, maxMs = 4000) {
+function waitForFirstPaint(maxMs = 1500): Promise<void> {
+  // 等待到列表出现首个卡片（首屏渲染完毕），或超时
+  const start = performance.now();
+  return new Promise((resolve) => {
+    const tick = () => {
+      if (hasAnyListItems() || performance.now() - start > maxMs) return resolve();
+      setTimeout(tick, 50);
+    };
+    tick();
+  });
+}
+async function gentlePrefetchUntilVisible(saved: SavedState, pageLimit = PREFETCH_LIMIT, maxMs = RESTORE_MAX_MS / 1.5) {
   const start = performance.now();
   const state: any = (app as any).discussions;
   if (!state || typeof state.loadMore !== 'function') return false;
@@ -145,50 +131,29 @@ async function gentlePrefetchUntilVisible(saved: SavedState, pageLimit = 6, maxM
   }
   return !!findTargetElement(saved);
 }
-
-async function restoreScroll(saved: SavedState) {
+function scrollToAnchor(el: HTMLElement) {
   const offset = headerOffsetGuess();
-
-  // 1) 优先锚点
-  let target = findTargetElement(saved);
-  if (!target) {
-    // 2) “返回”场景下，温和预取一些数据让锚点出现（不滚动页面）
-    const ok = await gentlePrefetchUntilVisible(saved, 6, 4000);
-    if (ok) target = findTargetElement(saved);
-  }
-  if (target) {
-    const y = window.scrollY + target.getBoundingClientRect().top - offset - 8;
-    window.scrollTo(0, Math.max(0, y));
-    return;
-  }
-
-  // 3) 找不到锚点时，仅在 y 合法时恢复；否则放弃（避免被拉到底）
+  const y = window.scrollY + el.getBoundingClientRect().top - offset - 8;
+  window.scrollTo(0, Math.max(0, y));
+}
+function scrollToYIfValid(y: number) {
   const doc = document.documentElement || document.body;
   const maxY = Math.max(0, (doc.scrollHeight || 0) - window.innerHeight);
-  const wantY = Math.max(0, (saved.y || 0) - offset);
-  if (wantY <= maxY) restoreScrollSafely(wantY, 5000);
+  if (y <= maxY) window.scrollTo(0, y);
 }
 
-/* ============== 仅“返回”时尝试恢复：导航意图探测 ============== */
-// 全局标记：是否属于“返回”导航
+/* --------- 仅“返回”触发恢复：安装全局返回探测 --------- */
 (function installBackNavDetector() {
-  // popstate：浏览器后退/前进（SPA 场景）
-  window.addEventListener('popstate', () => {
-    (window as any).__lbtcShouldRestore = true;
-  });
-  // pageshow.persisted：bfcache 恢复（iOS/Safari 等）
+  if ((window as any).__lbtcBackDetectorInstalled) return;
+  (window as any).__lbtcBackDetectorInstalled = true;
+  window.addEventListener('popstate', () => { (window as any).__lbtcShouldRestore = true; });
   window.addEventListener('pageshow', (e: PageTransitionEvent) => {
-    if ((e as any).persisted) {
-      (window as any).__lbtcShouldRestore = true;
-    }
+    if ((e as any).persisted) (window as any).__lbtcShouldRestore = true;
   });
-  // 初始为 false；整页刷新不会触发以上两个事件，因而不会恢复
-  if ((window as any).__lbtcShouldRestore === undefined) {
-    (window as any).__lbtcShouldRestore = false;
-  }
+  if ((window as any).__lbtcShouldRestore === undefined) (window as any).__lbtcShouldRestore = false;
 })();
 
-/* ==================== 原有功能（按钮/弹窗） ==================== */
+/* ========================= 原有功能（按钮/弹窗） ========================= */
 app.initializers.add(EXT_ID, () => {
   function toolbarLabel(): Mithril.Children {
     const q =
@@ -201,10 +166,7 @@ app.initializers.add(EXT_ID, () => {
       return app.translator.trans('lady-byron-tag-filter.forum.toolbar.button');
     }
 
-    const bySlug = new Map(
-      app.store.all('tags').map((t: any) => [t.slug?.(), t])
-    );
-
+    const bySlug = new Map(app.store.all('tags').map((t: any) => [t.slug?.(), t]));
     const parts: Mithril.Children[] = [];
     tagSlugs.forEach((slug, i) => {
       const tag = bySlug.get(slug);
@@ -221,10 +183,7 @@ app.initializers.add(EXT_ID, () => {
           {name}
         </span>
       );
-
-      if (i < tagSlugs.length - 1) {
-        parts.push(<span key={`tl-sep-${i}`} className="lbtc-tf-ToolbarSep">{' '}</span>);
-      }
+      if (i < tagSlugs.length - 1) parts.push(<span key={`tl-sep-${i}`} className="lbtc-tf-ToolbarSep">{' '}</span>);
     });
 
     return parts;
@@ -254,60 +213,146 @@ app.initializers.add(EXT_ID, () => {
     );
   });
 
-  /* ============== 列表页挂载（仅“返回”才恢复） ============== */
-  // 关闭 Page 默认“切页置顶/浏览器内部还原”，由我们在“返回”场景托管
+  /* ========================= 列表页：滚动恢复挂载 ========================= */
+
+  // 关闭 Page 的置顶/浏览器内部还原，由我们在“返回”场景托管
   extend(IndexPage.prototype as any, 'oninit', function () {
     try {
       (this as any).scrollTopOnCreate = false;
       (this as any).useBrowserScrollRestoration = false;
+
+      // 若是“返回”，在这一页临时禁用浏览器自动还原，避免先被放到中段
+      if ((window as any).__lbtcShouldRestore === true && 'scrollRestoration' in history) {
+        (window as any).__lbtcPrevScrollRestoration = (history as any).scrollRestoration;
+        (history as any).scrollRestoration = 'manual';
+      }
     } catch {}
   });
 
-  // “返回”时恢复（一次性）；刷新/直达不恢复
+  // 恢复逻辑：等待首屏出现 -> 精确锚点；失败则尝试温和预取；仍失败再用 y（合法才滚）
   extend(IndexPage.prototype as any, 'oncreate', function () {
-    try {
+    const key = storageKey();
+
+    const tryRestore = async () => {
       if ((window as any).__lbtcShouldRestore !== true) return;
-      const key = storageKey();
-      if ((window as any).__lbtcRestoredKey === key) return;
       const saved = parseSaved();
-      if (saved) {
-        (window as any).__lbtcRestoredKey = key;
-        (window as any).__lbtcShouldRestore = false;
-        restoreScroll(saved);
-      } else {
-        (window as any).__lbtcShouldRestore = false;
+      if (!saved) return finish(false);
+
+      // 用户一旦主动滚动，放弃恢复（不和用户抢）
+      let aborted = false;
+      const abort = () => { aborted = true; };
+      const removeAborters = () => {
+        window.removeEventListener('wheel', abort, { capture: true } as any);
+        window.removeEventListener('touchstart', abort, { capture: true } as any);
+        window.removeEventListener('keydown', abort, { capture: true } as any);
+      };
+      window.addEventListener('wheel', abort, { capture: true, passive: true });
+      window.addEventListener('touchstart', abort, { capture: true, passive: true });
+      window.addEventListener('keydown', abort, { capture: true });
+
+      const start = performance.now();
+
+      // 1) 等首屏（避免在 0 高度时计算锚点）
+      await waitForFirstPaint(1500);
+
+      // 2) 循环尝试：锚点 -> 预取 -> y（均不滚到底）
+      let success = false;
+      while (!aborted && performance.now() - start < RESTORE_MAX_MS) {
+        const target = findTargetElement(saved);
+        if (target) {
+          scrollToAnchor(target);
+          success = true;
+          break;
+        }
+        // 首次进入或数据不够：温和预取一小段（不滚动页面）
+        const prefetched = await gentlePrefetchUntilVisible(saved, PREFETCH_LIMIT, RESTORE_MAX_MS / 1.5);
+        if (prefetched) {
+          const t2 = findTargetElement(saved);
+          if (t2) {
+            scrollToAnchor(t2);
+            success = true;
+            break;
+          }
+        }
+        // 最后用 y 尝试一次（仅当 y 合法时）
+        const offset = headerOffsetGuess();
+        const wantY = Math.max(0, (saved.y || 0) - offset);
+        const doc = document.documentElement || document.body;
+        const maxY = Math.max(0, (doc.scrollHeight || 0) - window.innerHeight);
+        if (wantY <= maxY) {
+          window.scrollTo(0, wantY);
+          success = true;
+        }
+        break;
       }
-    } catch {}
+
+      removeAborters();
+      finish(success);
+    };
+
+    const finish = (success: boolean) => {
+      // 成功才记 restoredKey；失败让 onupdate 再试一次
+      if (success) (window as any).__lbtcRestoredKey = key;
+      (window as any).__lbtcShouldRestore = false;
+
+      // 恢复浏览器默认滚动策略
+      try {
+        if ('scrollRestoration' in history) {
+          const prev = (window as any).__lbtcPrevScrollRestoration;
+          (history as any).scrollRestoration = prev || 'auto';
+          (window as any).__lbtcPrevScrollRestoration = undefined;
+        }
+      } catch {}
+    };
+
+    // 如果本次不是“返回”，直接退出
+    if ((window as any).__lbtcShouldRestore !== true) return;
+
+    // 避免重复恢复
+    if ((window as any).__lbtcRestoredKey === key) {
+      (window as any).__lbtcShouldRestore = false;
+      tryRestore(); // 仍然确保恢复 scrollRestoration
+      return;
+    }
+
+    // 开始恢复
+    tryRestore();
   });
 
-  // 慢渲染时在 onupdate 再试一次（仍仅“返回”触发）
+  // 慢网/慢机：初次没成功，渲染更新后再试一次（仍仅“返回”时）
   extend(IndexPage.prototype as any, 'onupdate', function () {
-    try {
-      if ((window as any).__lbtcShouldRestore !== true) return;
-      const key = storageKey();
-      if ((window as any).__lbtcRestoredKey === key) return;
-      const saved = parseSaved();
-      if (saved) {
-        (window as any).__lbtcRestoredKey = key;
-        (window as any).__lbtcShouldRestore = false;
-        restoreScroll(saved);
-      } else {
-        (window as any).__lbtcShouldRestore = false;
-      }
-    } catch {}
+    if ((window as any).__lbtcShouldRestore !== true) return;
+    const key = storageKey();
+    if ((window as any).__lbtcRestoredKey === key) return;
+
+    // 触发一次轻量的再尝试
+    const saved = parseSaved();
+    if (!saved) {
+      (window as any).__lbtcShouldRestore = false;
+      return;
+    }
+    const target = findTargetElement(saved);
+    if (target) {
+      scrollToAnchor(target);
+      (window as any).__lbtcRestoredKey = key;
+      (window as any).__lbtcShouldRestore = false;
+      try {
+        if ('scrollRestoration' in history) {
+          const prev = (window as any).__lbtcPrevScrollRestoration;
+          (history as any).scrollRestoration = prev || 'auto';
+          (window as any).__lbtcPrevScrollRestoration = undefined;
+        }
+      } catch {}
+    }
   });
 
-  // 离开时保存位置（含锚点）
-  extend(IndexPage.prototype as any, 'onremove', function () {
-    saveCurrentState();
-  });
+  // 离开时保存位置；并在进入主题的 pointerdown/click 捕获阶段先保存一次（移动端更稳）
+  extend(IndexPage.prototype as any, 'onremove', function () { saveCurrentState(); });
 
-  // 提前保存（移动端更稳定）：pointerdown/click 捕获阶段
   if (!(window as any).__lbtcScrollGuardInstalled) {
     (window as any).__lbtcScrollGuardInstalled = true;
     const handler = (ev: Event) => {
-      const target = ev.target as HTMLElement | null;
-      const a = target && (target.closest?.('a[href*="/d/"]') as HTMLAnchorElement | null);
+      const a = (ev.target as HTMLElement | null)?.closest?.('a[href*="/d/"]') as HTMLAnchorElement | null;
       if (a) saveCurrentState();
     };
     document.addEventListener('pointerdown', handler, { capture: true, passive: true });
