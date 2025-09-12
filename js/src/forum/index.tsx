@@ -8,12 +8,8 @@ import { warmupTags, ensureCategoryTagsLoaded } from './util/tags';
 
 const EXT_ID = 'lady-byron-tag-filter';
 
-/* -------------------- 滚动恢复（温和版，无“推进加载”） -------------------- */
-type SavedState = {
-  y: number;     // 离开时的 scrollY（兜底）
-  href?: string; // 视口最上方帖子的链接（可精确定位）
-  id?: string;   // 视口最上方帖子的 data-id（可选）
-};
+/* -------------------- 滚动恢复（温和版，仅在“从帖子返回”时启用） -------------------- */
+type SavedState = { y: number; href?: string; id?: string };
 
 function getRouteKey(): string {
   try {
@@ -24,6 +20,9 @@ function getRouteKey(): string {
 }
 function storageKey(): string {
   return `lbtc:scroll:${getRouteKey()}`;
+}
+function pendingKey(): string {
+  return `lbtc:scroll:pending:${getRouteKey()}`;
 }
 
 function headerOffsetGuess(): number {
@@ -39,7 +38,7 @@ function saveCurrentState() {
       document.body?.scrollTop ||
       0;
 
-    // 抓“视口最上方”的列表项（用作锚点）
+    // 视口最上方的列表项（用于更精确的回位）
     let topEl: HTMLElement | null = null;
     const items = Array.from(document.querySelectorAll<HTMLElement>('li.DiscussionListItem'));
     let minPos = Infinity;
@@ -98,7 +97,7 @@ function findTargetElement(state: SavedState): HTMLElement | null {
   return null;
 }
 
-/** 在内容高度足够后再恢复到 y，避免早滚失败（不触发“加载更多”） */
+/** 内容高度足够后再滚到 y（不会去推“加载更多”） */
 function restoreScrollSafely(y: number) {
   let tries = 0;
   const maxTries = 40; // ~2s
@@ -125,15 +124,13 @@ async function restoreScroll(state: SavedState) {
     window.scrollTo(0, Math.max(0, y));
     return;
   }
-  // 找不到锚点时，退回到 y（等待高度就绪，不推动页面到底部）
   const wantY = Math.max(0, (state.y || 0) - offset);
   restoreScrollSafely(wantY);
 }
 
-/* -------------------- 初始化（保留原功能） -------------------- */
+/* -------------------- 初始化（原功能保持不变） -------------------- */
 app.initializers.add(EXT_ID, () => {
-  // 不更改浏览器的 history.scrollRestoration；只托管 Page 的置顶行为
-  // —— 工具栏按钮逻辑（原样保留） ——
+  // —— 工具栏按钮（你原有逻辑） ——
   function toolbarLabel(): Mithril.Children {
     const q =
       app.search && typeof (app.search as any).params === 'function'
@@ -198,8 +195,7 @@ app.initializers.add(EXT_ID, () => {
     );
   });
 
-  /* -------------------- 列表页滚动恢复挂载（温和版） -------------------- */
-  // 1) 关闭 Page 默认“切页置顶”和浏览器内部还原由 Page 托管（不影响其它页面）
+  /* -------------------- 列表页滚动恢复挂载（只在“从帖子返回”时执行） -------------------- */
   extend(IndexPage.prototype as any, 'oninit', function () {
     try {
       (this as any).scrollTopOnCreate = false;
@@ -207,20 +203,23 @@ app.initializers.add(EXT_ID, () => {
     } catch {}
   });
 
-  // 2) 挂载后若有保存状态则恢复（不推动页面到底部）
+  // 仅当 pending 标记存在且匹配当前路由时才恢复
   extend(IndexPage.prototype as any, 'oncreate', function () {
     try {
+      const pendingRaw = sessionStorage.getItem(pendingKey());
+      if (!pendingRaw) return;                           // 非“返回”场景：不恢复
       const state = parseSaved();
-      if (state) restoreScroll(state);
+      if (!state) return;
+      restoreScroll(state);
+      sessionStorage.removeItem(pendingKey());          // 用一次就清
     } catch {}
   });
 
-  // 3) 离开时保存当前位置（含锚点信息）
   extend(IndexPage.prototype as any, 'onremove', function () {
     saveCurrentState();
   });
 
-  // 4) 保险：点击进入主题前先保存一次（不改变滚动，仅保存）
+  // 点击进入帖子前，保存状态 + 打上“待返回”标记（仅限本路由）
   if (!(window as any).__lbtcScrollGuardInstalled) {
     (window as any).__lbtcScrollGuardInstalled = true;
     document.addEventListener(
@@ -228,9 +227,22 @@ app.initializers.add(EXT_ID, () => {
       (ev) => {
         const target = ev.target as HTMLElement | null;
         const a = target && (target.closest?.('a[href*="/d/"]') as HTMLAnchorElement | null);
-        if (a) saveCurrentState();
+        if (a) {
+          saveCurrentState();
+          try {
+            sessionStorage.setItem(pendingKey(), JSON.stringify({ t: Date.now() }));
+          } catch {}
+        }
       },
       { capture: true, passive: true }
     );
+
+    // 刷新/关闭页前清掉当前路由的残留状态，避免刷新时误恢复
+    window.addEventListener('beforeunload', () => {
+      try {
+        sessionStorage.removeItem(storageKey());
+        sessionStorage.removeItem(pendingKey());
+      } catch {}
+    });
   }
 });
