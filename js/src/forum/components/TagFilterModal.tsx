@@ -218,10 +218,10 @@ export default class TagFilterModal extends Modal {
             </Button>
             {expandAll && collapseAll ? (
               <>
-                <Button type="button" className="Button" style={{ marginLeft: '8px' }} onclick={expandAll}>
+                <Button type="button" className="Button" icon="fas fa-angle-double-down" style={{ marginLeft: '8px' }} onclick={expandAll}>
                   {app.translator.trans('lady-byron-tag-filter.forum.toolbar.expand_all')}
                 </Button>
-                <Button type="button" className="Button" style={{ marginLeft: '8px' }} onclick={collapseAll}>
+                <Button type="button" className="Button" icon="fas fa-angle-double-up" style={{ marginLeft: '8px' }} onclick={collapseAll}>
                   {app.translator.trans('lady-byron-tag-filter.forum.toolbar.collapse_all')}
                 </Button>
               </>
