@@ -18,7 +18,7 @@
   "extra": {
     "flarum-extension": {
       "id": "lady-byron-tag-filter",
-      "title": "Tag Filter (Grouped)",
+      "title": "Tag Filter",
       "category": "feature",
       "icon": {
         "name": "fas fa-filter",
