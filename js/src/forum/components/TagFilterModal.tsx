@@ -1,3 +1,5 @@
+// js/src/forum/components/TagFilterModal.tsx
+
 import app from 'flarum/forum/app';
 import Modal from 'flarum/common/components/Modal';
 import Button from 'flarum/common/components/Button';
@@ -6,6 +8,9 @@ import Stream from 'flarum/common/utils/Stream';
 import classList from 'flarum/common/utils/classList';
 import sortTags from 'flarum/tags/common/utils/sortTags';
 import type Tag from 'flarum/tags/common/models/Tag';
+// === 新增导入：用于渲染插件A风格的“标签Chip” ===
+import tagLabel from 'flarum/tags/common/helpers/tagLabel';
+// ============================================
 
 import TagChip from './TagChip';
 import {
@@ -18,7 +23,7 @@ import {
   getCurrentQ,
   parseQ,
   stringifyQ,
-  toggleTagSlug,
+  toggleTagSlug, // 注意：这个在onsubmit中已不再需要，但保留也无妨
   clearTagsInQ,
 } from '../util/query';
 import { ensureCategoryTagsLoaded, warmupTags } from '../util/tags';
@@ -35,6 +40,10 @@ export default class TagFilterModal extends Modal {
   // 防止 guard 重入
   private guardPending = false;
 
+  // === 新增状态：用于暂存用户在弹窗中的标签选择 (slugs) ===
+  private selectedSlugs!: Set<string>;
+  // ==================================================
+
   className() {
     return 'lbtc-tf-Modal Modal--large';
   }
@@ -47,19 +56,42 @@ export default class TagFilterModal extends Modal {
     super.oninit(vnode);
     this.collapsed = loadCollapsed();
 
+    // === 修改点：从 URL 初始化 state ===
+    const { tagSlugs } = parseQ(getCurrentQ());
+    this.selectedSlugs = new Set(tagSlugs);
+    // =================================
+
     // 仅当分类需要但缓存缺失时才请求；否则使用已有缓存
     await ensureCategoryTagsLoaded();
     this.allTags = app.store.all<Tag>('tags');
     this.loading = false;
   }
 
-  // 表单提交一律视为“关闭”以规避 submit 干扰
+  // === 修改点：onsubmit 不再是“关闭”，而是“应用过滤” ===
   onsubmit(e: SubmitEvent) {
     e.preventDefault();
+
+    // 获取当前的 URL (保留搜索词等非标签部分)
+    const q = getCurrentQ();
+    const { rest } = parseQ(q);
+
+    // 组合非标签部分 + 新的标签 state
+    const next = { rest, tagSlugs: Array.from(this.selectedSlugs) };
+    const newQ = stringifyQ(next);
+
+    // 检查查询是否真的改变了，避免无意义的刷新
+    const oldQ = stringifyQ(parseQ(q));
+    if (newQ !== oldQ) {
+      // 执行导航
+      m.route.set(app.route('index', newQ ? { q: newQ } : {}));
+    }
+
+    // 关闭弹窗
     this.hide();
   }
+  // =================================================
 
-  // 把右上角 X 强制设为非提交按钮，避免触发 submit
+  // 把右上角 X 强制设为非提交按钮，避免触发 submit (保持不变)
   oncreate(vnode: Mithril.VnodeDOM) {
     super.oncreate(vnode);
     const closeBtn =
@@ -70,9 +102,7 @@ export default class TagFilterModal extends Modal {
   }
 
   /**
-   * 渲染前兜底：若发现分类中的某些 tagId 仍未载入，
-   * 触发一次后台加载并显示 Loading；加载完自动重绘。
-   * 同步返回：true=可渲染，false=需等待。
+   * 渲染前兜底 (保持不变)
    */
   private guardEnsureLoaded(): boolean {
     const cats = getCategories();
@@ -115,7 +145,7 @@ export default class TagFilterModal extends Modal {
       );
     }
 
-    // 若仍缺失，先显示 Loading，等 guard 拉完再渲染
+    // 若仍缺失，先显示 Loading (保持不变)
     if (!this.guardEnsureLoaded()) {
       return (
         <div className="Modal-body">
@@ -124,13 +154,16 @@ export default class TagFilterModal extends Modal {
       );
     }
 
-    const { tagSlugs: selectedSlugs } = parseQ(getCurrentQ());
-    const selectedSet = new Set(selectedSlugs);
+    // === 修改点：数据源改为内部 state ===
+    // const { tagSlugs: selectedSlugs } = parseQ(getCurrentQ()); <== 移除
+    // const selectedSet = new Set(selectedSlugs); <== 移除
+    const selectedSet = this.selectedSlugs; // <== 使用内部 state
+    // ===================================
 
     const keyword = (this.filter() || '').trim().toLowerCase();
     const visible = keyword
       ? this.allTags.filter((t) =>
-          (`${t.name()} ${t.description() || ''}`)
+          `${t.name()} ${t.description() || ''}`
             .toLowerCase()
             .includes(keyword)
         )
@@ -141,7 +174,7 @@ export default class TagFilterModal extends Modal {
     if (cats.length) {
       const { grouped, ungrouped } = pickTagsInCategories(visible, cats);
 
-      // 默认全部折叠（含“未分组”），只做一次；状态持久化
+      // 默认全部折叠 (保持不变)
       if (!this.initialized) {
         cats.forEach((g) => (this.collapsed[String(g.id)] ??= true));
         if (ungrouped.length) this.collapsed.__ungrouped__ ??= true;
@@ -149,6 +182,7 @@ export default class TagFilterModal extends Modal {
         saveCollapsed(this.collapsed);
       }
 
+      // 展开/折叠全部 (保持不变)
       const expandAll = () => {
         cats.forEach((g) => (this.collapsed[String(g.id)] = false));
         this.collapsed.__ungrouped__ = false;
@@ -162,10 +196,13 @@ export default class TagFilterModal extends Modal {
         m.redraw();
       };
 
-      const header = this.renderHeader(selectedSlugs, expandAll, collapseAll);
+      // === 修改点：renderHeader 调用移除 selectedSlugs 参数 ===
+      // const header = this.renderHeader(selectedSlugs, expandAll, collapseAll);
+      const header = this.renderHeader(expandAll, collapseAll);
+      // ==================================================
       const sections: Mithril.Children[] = [];
 
-      // 已分组
+      // 已分组 (修改 onclick)
       grouped.forEach(({ group, tags }) => {
         const key = String(group.id);
         const isCollapsed = !!this.collapsed[key];
@@ -194,7 +231,10 @@ export default class TagFilterModal extends Modal {
               {sorted.map((t) =>
                 TagChip(t, {
                   selected: selectedSet.has(t.slug()!),
-                  onclick: () => this.toggleSelect(t.slug()!),
+                  // === 修改点：调用新方法 ===
+                  // onclick: () => this.toggleSelect(t.slug()!),
+                  onclick: () => this.updateSelection(t.slug()!),
+                  // ========================
                 })
               )}
             </li>
@@ -202,7 +242,7 @@ export default class TagFilterModal extends Modal {
         }
       });
 
-      // 未分组
+      // 未分组 (修改 onclick)
       if (ungrouped.length) {
         const key = '__ungrouped__';
         const isCollapsed = !!this.collapsed[key];
@@ -233,7 +273,10 @@ export default class TagFilterModal extends Modal {
               {sorted.map((t) =>
                 TagChip(t, {
                   selected: selectedSet.has(t.slug()!),
-                  onclick: () => this.toggleSelect(t.slug()!),
+                  // === 修改点：调用新方法 ===
+                  // onclick: () => this.toggleSelect(t.slug()!),
+                  onclick: () => this.updateSelection(t.slug()!),
+                  // ========================
                 })
               )}
             </li>
@@ -250,7 +293,10 @@ export default class TagFilterModal extends Modal {
     }
 
     // —— 无分组：扁平回退 ——
-    const header = this.renderHeader(selectedSlugs);
+    // === 修改点：renderHeader 调用移除 selectedSlugs 参数 ===
+    // const header = this.renderHeader(selectedSlugs);
+    const header = this.renderHeader();
+    // ==================================================
     const flat = sortTags(visible.slice());
     return [
       header,
@@ -259,7 +305,10 @@ export default class TagFilterModal extends Modal {
           {flat.map((t) =>
             TagChip(t, {
               selected: selectedSet.has(t.slug()!),
-              onclick: () => this.toggleSelect(t.slug()!),
+              // === 修改点：调用新方法 ===
+              // onclick: () => this.toggleSelect(t.slug()!),
+              onclick: () => this.updateSelection(t.slug()!),
+              // ========================
             })
           )}
         </div>
@@ -267,47 +316,76 @@ export default class TagFilterModal extends Modal {
     ];
   }
 
+  // === 修改点：完整替换 renderHeader 方法 ===
   private renderHeader(
-    selectedSlugs: string[],
     expandAll?: () => void,
     collapseAll?: () => void
   ) {
+    // "清除" 按钮的新逻辑：清空内部 state
     const clearAll = () => {
-      const q = getCurrentQ();
-      const cleared = stringifyQ(clearTagsInQ(q));
-      this.navigateWithQ(cleared);
+      this.selectedSlugs.clear();
+      m.redraw();
     };
 
+    // 从内部 state (this.selectedSlugs) 获取已选标签
     const bySlug = new Map(this.allTags.map((t) => [t.slug()!, t]));
-    const selectedTags = selectedSlugs
+    const selectedTags = Array.from(this.selectedSlugs)
       .map((s) => bySlug.get(s))
       .filter(Boolean) as Tag[];
 
     return (
       <div className="Modal-body">
         <div className="Form">
+          {/* ===== 解决问题1：模拟插件A的搜索框 ===== */}
           <div className="Form-group">
-            <input
-              className="FormControl"
-              placeholder={app.translator.trans(
-                'lady-byron-tag-filter.forum.toolbar.placeholder'
-              )}
-              bidi={this.filter}
-            />
+            <div className={'TagsInput FormControl'}>
+              <span className="TagsInput-selected">
+                {selectedTags.map((tag) => (
+                  <span
+                    key={`sel-${tag.id()}`}
+                    className="TagsInput-tag"
+                    onclick={() => this.updateSelection(tag.slug()!)} // 点击移除
+                  >
+                    {tagLabel(tag)}
+                  </span>
+                ))}
+              </span>
+              <input
+                className="FormControl"
+                placeholder={app.translator.trans(
+                  'lady-byron-tag-filter.forum.toolbar.placeholder'
+                )}
+                bidi={this.filter}
+              />
+            </div>
           </div>
+          {/* ======================================= */}
 
           <div className="Form-group">
+            {/* ===== 新增：提交按钮 ===== */}
+            <Button
+              type="submit" // 设为 submit，以触发 onsubmit
+              className="Button Button--primary"
+              icon="fas fa-check"
+            >
+              {app.translator.trans('flarum-tags.lib.tag_selection_modal.submit_button')}
+            </Button>
+
+            {/* ===== 修改：清除按钮 ===== */}
             <Button
               type="button"
               className="Button"
+              style={{ marginLeft: '8px' }}
               icon="fas fa-eraser"
-              onclick={clearAll}
-              disabled={!selectedSlugs.length}
+              onclick={clearAll} // 使用新逻辑
+              disabled={!this.selectedSlugs.size} // 检查新 state
             >
               {app.translator.trans(
                 'lady-byron-tag-filter.forum.toolbar.clear'
               )}
             </Button>
+
+            {/* "展开/折叠" 按钮保持不变 */}
             {expandAll && collapseAll ? (
               <>
                 <Button
@@ -334,23 +412,13 @@ export default class TagFilterModal extends Modal {
             ) : null}
           </div>
 
-          {/* 已选择标签反馈（彩色芯片，点击可移除；描述在 CSS 中隐藏） */}
-          <div className="Form-group">
-            {selectedTags.length ? (
-              <div className="lbtc-tf-GroupBody">
-                {selectedTags.map((t) =>
-                  TagChip(t, {
-                    selected: true,
-                    onclick: () => this.toggleSelect(t.slug()!),
-                  })
-                )}
-              </div>
-            ) : null}
-          </div>
+          {/* ===== 移除：旧的已选标签反馈区 ===== */}
+          
         </div>
       </div>
     );
   }
+  // ==================================================
 
   private toggle(key: string) {
     this.collapsed[key] = !this.collapsed[key];
@@ -358,16 +426,20 @@ export default class TagFilterModal extends Modal {
     m.redraw();
   }
 
-  private toggleSelect(slug: string) {
-    const q = getCurrentQ();
-    const { rest, tagSlugs } = parseQ(q);
-    const next = toggleTagSlug(rest, tagSlugs, slug);
-    this.navigateWithQ(stringifyQ(next));
+  // === 新增方法：更新内部 state（解决问题2） ===
+  private updateSelection(slug: string) {
+    if (this.selectedSlugs.has(slug)) {
+      this.selectedSlugs.delete(slug);
+    } else {
+      this.selectedSlugs.add(slug);
+    }
+    // 只重绘弹窗，不导航
+    m.redraw();
   }
+  // ==========================================
 
-  private navigateWithQ(q: string) {
-    m.route.set(app.route('index', q ? { q } : {}));
-    this.hide();
-  }
+  // === 删除：旧的 toggleSelect 和 navigateWithQ ===
+  // private toggleSelect(slug: string) { ... }
+  // private navigateWithQ(q: string) { ... }
+  // ============================================
 }
-
