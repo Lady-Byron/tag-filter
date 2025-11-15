@@ -1,8 +1,8 @@
 /* —— 分组列表基础 —— */
 .lbtc-tf-GroupList { list-style: none; margin: 0; padding: 0; }
 .lbtc-tf-GroupHeader {
-  display: flex; align-items: center; cursor: pointer;
-  font-weight: 600; margin: 8px 0 4px;
+  display: flex; align-items: center; cursor: pointer;
+  font-weight: 600; margin: 8px 0 4px;
 }
 .lbtc-tf-GroupHeader-caret { margin-right: 6px; transition: transform .2s ease; }
 .lbtc-tf-GroupHeader.collapsed .lbtc-tf-GroupHeader-caret { transform: rotate(-90deg); }
@@ -10,11 +10,11 @@
 
 /* —— 芯片 —— */
 .lbtc-tf-Chip.Button {
-  display: inline-flex; align-items: center; vertical-align: top;
-  margin: 2px; padding: 6px 10px; line-height: 1.25;
-  border-radius: 10px;
-  border: 1px solid var(--tag-title-color, var(--tag-color));
-  background: transparent;
+  display: inline-flex; align-items: center; vertical-align: top;
+  margin: 2px; padding: 6px 10px; line-height: 1.25;
+  border-radius: 10px;
+  border: 1px solid var(--tag-title-color, var(--tag-color));
+  background: transparent;
 }
 .lbtc-tf-Chip .Button-label { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .lbtc-tf-Chip .SelectTagListItem-icon { flex: 0 0 auto; margin-right: 2px; }
@@ -22,7 +22,7 @@
 /* 始终用彩色文字（包含选中态） */
 .lbtc-tf-Chip .SelectTagListItem-name,
 .lbtc-tf-Chip.Button.is-selected .SelectTagListItem-name {
-  color: var(--tag-title-color, var(--tag-color)) !important;
+  color: var(--tag-title-color, var(--tag-color)) !important;
 }
 
 /* 隐藏描述，避免拉长 */
@@ -33,13 +33,14 @@
 
 /* —— 工具栏按钮里的“已选标签”彩色文本 —— */
 .lbtc-tf-ToolbarTag {
-  color: var(--tag-title-color, var(--tag-color)) !important;
-  font-weight: 600;
-}
+  color: var(--tag-title-color, var(--tag-color)) !important;
+  font-weight: 600;
 
 /* 仅针对本扩展的 Modal，保证动画事件一定触发且非常短 */
 .lbtc-tf-Modal .Modal-backdrop,
 .lbtc-tf-Modal .Modal-content {
-  animation-duration: 0.001s !important;
-  animation-iteration-count: 1 !important;
+  animation-duration: 0.001s !important;
+  animation-iteration-count: 1 !important;
+}
+
 }
