@@ -56,7 +56,7 @@ export default class TagFilterModal extends Modal {
     this.loading = false;
   }
 
-  // === 修复卡死问题：移除 this.hide() ===
+  // (卡死问题修复：移除 this.hide())
   onsubmit(e: SubmitEvent) {
     e.preventDefault();
 
@@ -70,7 +70,6 @@ export default class TagFilterModal extends Modal {
     if (newQ !== oldQ) {
       m.route.set(app.route('index', newQ ? { q: newQ } : {}));
     }
-    // (移除 this.hide(); Flarum 会自动处理)
   }
 
   // (保留 "X" 按钮的双重保险)
@@ -150,12 +149,33 @@ export default class TagFilterModal extends Modal {
     if (cats.length) {
       const { grouped, ungrouped } = pickTagsInCategories(visible, cats);
 
+      // (默认折叠状态，保持不变)
       if (!this.initialized) {
         cats.forEach((g) => (this.collapsed[String(g.id)] ??= true));
         if (ungrouped.length) this.collapsed.__ungrouped__ ??= true;
         this.initialized = true;
-        saveCollapsed(this.collapsed);
       }
+
+      // === 新增：自动展开搜索命中的分组 ===
+      if (keyword.length > 0) {
+        // 1. 找出所有有结果的分组 ID
+        // (grouped 已经是被 keyword 过滤后的结果)
+        const groupsWithResults = new Set(grouped.map(g => String(g.group.id)));
+        
+        // 2. 遍历所有分类，如果它之前是折叠的 (true)，但现在有了搜索结果，就展开它 (false)
+        cats.forEach((g) => {
+          const key = String(g.id);
+          if (this.collapsed[key] === true && groupsWithResults.has(key)) {
+            this.collapsed[key] = false;
+          }
+        });
+
+        // 3. 同样地，检查“未分组”
+        if (this.collapsed['__ungrouped__'] === true && ungrouped.length > 0) {
+          this.collapsed['__ungrouped__'] = false;
+        }
+      }
+      // ===================================
 
       const expandAll = () => {
         cats.forEach((g) => (this.collapsed[String(g.id)] = false));
@@ -175,6 +195,7 @@ export default class TagFilterModal extends Modal {
 
       grouped.forEach(({ group, tags }) => {
         const key = String(group.id);
+        // (由于上面的自动展开逻辑，此处的 isCollapsed 会在搜索时正确地变为 false)
         const isCollapsed = !!this.collapsed[key];
         const sorted = sortTags(tags.slice());
 
@@ -273,7 +294,7 @@ export default class TagFilterModal extends Modal {
     ];
   }
 
-  // === 修复版：仅在有已选标签时才应用动态宽度 ===
+  // (V5.0 的 Header 修复版，保持不变)
   private renderHeader(
     expandAll?: () => void,
     collapseAll?: () => void
@@ -292,27 +313,20 @@ export default class TagFilterModal extends Modal {
       'lady-byron-tag-filter.forum.toolbar.placeholder'
     );
     
-    // --- 挤压问题修复：开始 ---
-    // 1. 定义基础属性
     const inputAttrs: any = {
       className: 'FormControl',
       placeholder: placeholder,
       bidi: this.filter,
     };
 
-    // 2. 仅当有已选标签时，才计算并应用动态 style
     if (selectedTags.length > 0) {
       const inputWidth = Math.max(
-        10, // 最小宽度
+        10,
         lengthWithCJK(placeholder),
         lengthWithCJK(this.filter())
       );
       inputAttrs.style = { width: inputWidth + 'ch' };
     }
-    // (如果没有已选标签，inputAttrs.style 将为 undefined，
-    // input 会自动 100% 宽度，修复挤压问题)
-    // --- 挤压问题修复：结束 ---
-
 
     return (
       <div className="Modal-body">
@@ -330,7 +344,6 @@ export default class TagFilterModal extends Modal {
                   </span>
                 ))}
               </span>
-              {/* --- 挤压问题修复：应用动态属性 --- */}
               <input {...inputAttrs} />
             </div>
           </div>
@@ -388,7 +401,6 @@ export default class TagFilterModal extends Modal {
       </div>
     );
   }
-  // ==================================================
 
   private toggle(key: string) {
     this.collapsed[key] = !this.collapsed[key];
@@ -412,6 +424,5 @@ function lengthWithCJK(text: string) {
   for (const ch of text || '') {
     len += /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(ch) ? 2 : 1;
   }
-  // 为输入框光标额外增加一点宽度
   return len + 1;
 }
