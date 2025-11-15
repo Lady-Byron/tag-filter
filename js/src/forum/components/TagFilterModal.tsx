@@ -8,9 +8,7 @@ import Stream from 'flarum/common/utils/Stream';
 import classList from 'flarum/common/utils/classList';
 import sortTags from 'flarum/tags/common/utils/sortTags';
 import type Tag from 'flarum/tags/common/models/Tag';
-// === 新增导入：用于渲染插件A风格的“标签Chip” ===
 import tagLabel from 'flarum/tags/common/helpers/tagLabel';
-// ============================================
 
 import TagChip from './TagChip';
 import {
@@ -23,7 +21,6 @@ import {
   getCurrentQ,
   parseQ,
   stringifyQ,
-  toggleTagSlug, // 注意：这个在onsubmit中已不再需要，但保留也无妨
   clearTagsInQ,
 } from '../util/query';
 import { ensureCategoryTagsLoaded, warmupTags } from '../util/tags';
@@ -36,13 +33,8 @@ export default class TagFilterModal extends Modal {
   private filter = Stream<string>('');
   private collapsed: Record<string, boolean> = {};
   private initialized = false;
-
-  // 防止 guard 重入
   private guardPending = false;
-
-  // === 新增状态：用于暂存用户在弹窗中的标签选择 (slugs) ===
   private selectedSlugs!: Set<string>;
-  // ==================================================
 
   className() {
     return 'lbtc-tf-Modal Modal--large';
@@ -56,61 +48,44 @@ export default class TagFilterModal extends Modal {
     super.oninit(vnode);
     this.collapsed = loadCollapsed();
 
-    // === 修改点：从 URL 初始化 state ===
     const { tagSlugs } = parseQ(getCurrentQ());
     this.selectedSlugs = new Set(tagSlugs);
-    // =================================
 
-    // 仅当分类需要但缓存缺失时才请求；否则使用已有缓存
     await ensureCategoryTagsLoaded();
     this.allTags = app.store.all<Tag>('tags');
     this.loading = false;
   }
 
-  // === 修改点：onsubmit 不再是“关闭”，而是“应用过滤” ===
   onsubmit(e: SubmitEvent) {
     e.preventDefault();
 
-    // 获取当前的 URL (保留搜索词等非标签部分)
     const q = getCurrentQ();
     const { rest } = parseQ(q);
 
-    // 组合非标签部分 + 新的标签 state
     const next = { rest, tagSlugs: Array.from(this.selectedSlugs) };
     const newQ = stringifyQ(next);
 
-    // 检查查询是否真的改变了，避免无意义的刷新
     const oldQ = stringifyQ(parseQ(q));
     if (newQ !== oldQ) {
-      // 执行导航
       m.route.set(app.route('index', newQ ? { q: newQ } : {}));
     }
 
-    // 关闭弹窗
     this.hide();
   }
-  // =================================================
 
-  // 把右上角 X 强制设为非提交按钮，避免触发 submit
+  // === 修复版：无条件设置 type=button 修复 X 按钮卡死 ===
   oncreate(vnode: Mithril.VnodeDOM) {
     super.oncreate(vnode);
     
     const closeBtn =
       this.element?.querySelector<HTMLButtonElement>('.Modal-close');
 
-    // === 修改点 ===
-    // 移除 "if" 检查，无条件地将类型设为 'button'。
-    // 这可以保证 "X" 按钮永远不会触发 onsubmit，
-    // 从而修复“双重 hide()”导致的页面卡死问题。
     if (closeBtn) {
       closeBtn.setAttribute('type', 'button');
     }
-    // ==============
   }
+  // ===============================================
 
-  /**
-   * 渲染前兜底 (保持不变)
-   */
   private guardEnsureLoaded(): boolean {
     const cats = getCategories();
     if (!cats.length) return true;
@@ -152,7 +127,6 @@ export default class TagFilterModal extends Modal {
       );
     }
 
-    // 若仍缺失，先显示 Loading (保持不变)
     if (!this.guardEnsureLoaded()) {
       return (
         <div className="Modal-body">
@@ -161,11 +135,7 @@ export default class TagFilterModal extends Modal {
       );
     }
 
-    // === 修改点：数据源改为内部 state ===
-    // const { tagSlugs: selectedSlugs } = parseQ(getCurrentQ()); <== 移除
-    // const selectedSet = new Set(selectedSlugs); <== 移除
-    const selectedSet = this.selectedSlugs; // <== 使用内部 state
-    // ===================================
+    const selectedSet = this.selectedSlugs;
 
     const keyword = (this.filter() || '').trim().toLowerCase();
     const visible = keyword
@@ -181,7 +151,6 @@ export default class TagFilterModal extends Modal {
     if (cats.length) {
       const { grouped, ungrouped } = pickTagsInCategories(visible, cats);
 
-      // 默认全部折叠 (保持不变)
       if (!this.initialized) {
         cats.forEach((g) => (this.collapsed[String(g.id)] ??= true));
         if (ungrouped.length) this.collapsed.__ungrouped__ ??= true;
@@ -189,7 +158,6 @@ export default class TagFilterModal extends Modal {
         saveCollapsed(this.collapsed);
       }
 
-      // 展开/折叠全部 (保持不变)
       const expandAll = () => {
         cats.forEach((g) => (this.collapsed[String(g.id)] = false));
         this.collapsed.__ungrouped__ = false;
@@ -203,13 +171,9 @@ export default class TagFilterModal extends Modal {
         m.redraw();
       };
 
-      // === 修改点：renderHeader 调用移除 selectedSlugs 参数 ===
-      // const header = this.renderHeader(selectedSlugs, expandAll, collapseAll);
       const header = this.renderHeader(expandAll, collapseAll);
-      // ==================================================
       const sections: Mithril.Children[] = [];
 
-      // 已分组 (修改 onclick)
       grouped.forEach(({ group, tags }) => {
         const key = String(group.id);
         const isCollapsed = !!this.collapsed[key];
@@ -238,10 +202,7 @@ export default class TagFilterModal extends Modal {
               {sorted.map((t) =>
                 TagChip(t, {
                   selected: selectedSet.has(t.slug()!),
-                  // === 修改点：调用新方法 ===
-                  // onclick: () => this.toggleSelect(t.slug()!),
                   onclick: () => this.updateSelection(t.slug()!),
-                  // ========================
                 })
               )}
             </li>
@@ -249,7 +210,6 @@ export default class TagFilterModal extends Modal {
         }
       });
 
-      // 未分组 (修改 onclick)
       if (ungrouped.length) {
         const key = '__ungrouped__';
         const isCollapsed = !!this.collapsed[key];
@@ -280,10 +240,7 @@ export default class TagFilterModal extends Modal {
               {sorted.map((t) =>
                 TagChip(t, {
                   selected: selectedSet.has(t.slug()!),
-                  // === 修改点：调用新方法 ===
-                  // onclick: () => this.toggleSelect(t.slug()!),
                   onclick: () => this.updateSelection(t.slug()!),
-                  // ========================
                 })
               )}
             </li>
@@ -300,10 +257,7 @@ export default class TagFilterModal extends Modal {
     }
 
     // —— 无分组：扁平回退 ——
-    // === 修改点：renderHeader 调用移除 selectedSlugs 参数 ===
-    // const header = this.renderHeader(selectedSlugs);
     const header = this.renderHeader();
-    // ==================================================
     const flat = sortTags(visible.slice());
     return [
       header,
@@ -312,10 +266,7 @@ export default class TagFilterModal extends Modal {
           {flat.map((t) =>
             TagChip(t, {
               selected: selectedSet.has(t.slug()!),
-              // === 修改点：调用新方法 ===
-              // onclick: () => this.toggleSelect(t.slug()!),
               onclick: () => this.updateSelection(t.slug()!),
-              // ========================
             })
           )}
         </div>
@@ -323,27 +274,35 @@ export default class TagFilterModal extends Modal {
     ];
   }
 
-  // === 修改点：完整替换 renderHeader 方法 ===
+  // === 修复版：添加 inputWidth 修复挤压问题 + 添加 icons 修复图标问题 ===
   private renderHeader(
     expandAll?: () => void,
     collapseAll?: () => void
   ) {
-    // "清除" 按钮的新逻辑：清空内部 state
     const clearAll = () => {
       this.selectedSlugs.clear();
       m.redraw();
     };
 
-    // 从内部 state (this.selectedSlugs) 获取已选标签
     const bySlug = new Map(this.allTags.map((t) => [t.slug()!, t]));
     const selectedTags = Array.from(this.selectedSlugs)
       .map((s) => bySlug.get(s))
       .filter(Boolean) as Tag[];
 
+    // --- 挤压问题修复：开始 ---
+    const placeholder = app.translator.trans(
+      'lady-byron-tag-filter.forum.toolbar.placeholder'
+    );
+    // 计算输入框应有的最小宽度
+    const inputWidth = Math.max(
+      lengthWithCJK(placeholder),
+      lengthWithCJK(this.filter())
+    );
+    // --- 挤压问题修复：结束 ---
+
     return (
       <div className="Modal-body">
         <div className="Form">
-          {/* ===== 解决问题1：模拟插件A的搜索框 ===== */}
           <div className="Form-group">
             <div className={'TagsInput FormControl'}>
               <span className="TagsInput-selected">
@@ -351,7 +310,7 @@ export default class TagFilterModal extends Modal {
                   <span
                     key={`sel-${tag.id()}`}
                     className="TagsInput-tag"
-                    onclick={() => this.updateSelection(tag.slug()!)} // 点击移除
+                    onclick={() => this.updateSelection(tag.slug()!)}
                   >
                     {tagLabel(tag)}
                   </span>
@@ -359,40 +318,37 @@ export default class TagFilterModal extends Modal {
               </span>
               <input
                 className="FormControl"
-                placeholder={app.translator.trans(
-                  'lady-byron-tag-filter.forum.toolbar.placeholder'
-                )}
+                placeholder={placeholder}
                 bidi={this.filter}
+                // --- 挤压问题修复：应用动态宽度 ---
+                style={{ width: inputWidth + 'ch' }}
               />
             </div>
           </div>
-          {/* ======================================= */}
 
           <div className="Form-group">
-            {/* ===== 新增：提交按钮 ===== */}
             <Button
-              type="submit" // 设为 submit，以触发 onsubmit
+              type="submit"
               className="Button Button--primary"
               icon="fas fa-check"
             >
               {app.translator.trans('flarum-tags.lib.tag_selection_modal.submit_button')}
             </Button>
 
-            {/* ===== 修改：清除按钮 ===== */}
             <Button
               type="button"
               className="Button"
               style={{ marginLeft: '8px' }}
               icon="fas fa-eraser"
-              onclick={clearAll} // 使用新逻辑
-              disabled={!this.selectedSlugs.size} // 检查新 state
+              onclick={clearAll}
+              disabled={!this.selectedSlugs.size}
             >
               {app.translator.trans(
                 'lady-byron-tag-filter.forum.toolbar.clear'
               )}
             </Button>
 
-            {/* "展开/折叠" 按钮保持不变 */}
+            {/* --- 图标问题修复：添加 icon 属性 --- */}
             {expandAll && collapseAll ? (
               <>
                 <Button
@@ -400,6 +356,7 @@ export default class TagFilterModal extends Modal {
                   className="Button"
                   style={{ marginLeft: '8px' }}
                   onclick={expandAll}
+                  icon="fas fa-angle-double-down"
                 >
                   {app.translator.trans(
                     'lady-byron-tag-filter.forum.toolbar.expand_all'
@@ -410,6 +367,7 @@ export default class TagFilterModal extends Modal {
                   className="Button"
                   style={{ marginLeft: '8px' }}
                   onclick={collapseAll}
+                  icon="fas fa-angle-double-up"
                 >
                   {app.translator.trans(
                     'lady-byron-tag-filter.forum.toolbar.collapse_all'
@@ -417,10 +375,8 @@ export default class TagFilterModal extends Modal {
                 </Button>
               </>
             ) : null}
+            {/* --- 图标问题修复：结束 --- */}
           </div>
-
-          {/* ===== 移除：旧的已选标签反馈区 ===== */}
-          
         </div>
       </div>
     );
@@ -433,20 +389,24 @@ export default class TagFilterModal extends Modal {
     m.redraw();
   }
 
-  // === 新增方法：更新内部 state（解决问题2） ===
   private updateSelection(slug: string) {
     if (this.selectedSlugs.has(slug)) {
       this.selectedSlugs.delete(slug);
     } else {
       this.selectedSlugs.add(slug);
     }
-    // 只重绘弹窗，不导航
     m.redraw();
   }
-  // ==========================================
-
-  // === 删除：旧的 toggleSelect 和 navigateWithQ ===
-  // private toggleSelect(slug: string) { ... }
-  // private navigateWithQ(q: string) { ... }
-  // ============================================
 }
+
+// === 挤压问题修复：从插件A移植的辅助函数 ===
+/** 与原生一致的宽度计算：CJK 算 2 个字符宽 */
+function lengthWithCJK(text: string) {
+  let len = 0;
+  for (const ch of text || '') {
+    len += /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(ch) ? 2 : 1;
+  }
+  // 为输入框光标额外增加一点宽度
+  return len + 1;
+}
+// ========================================
