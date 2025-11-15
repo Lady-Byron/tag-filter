@@ -56,6 +56,7 @@ export default class TagFilterModal extends Modal {
     this.loading = false;
   }
 
+  // === 修复卡死问题：移除 this.hide() ===
   onsubmit(e: SubmitEvent) {
     e.preventDefault();
 
@@ -69,11 +70,10 @@ export default class TagFilterModal extends Modal {
     if (newQ !== oldQ) {
       m.route.set(app.route('index', newQ ? { q: newQ } : {}));
     }
-
-    this.hide();
+    // (移除 this.hide(); Flarum 会自动处理)
   }
 
-  // === 修复版：无条件设置 type=button 修复 X 按钮卡死 ===
+  // (保留 "X" 按钮的双重保险)
   oncreate(vnode: Mithril.VnodeDOM) {
     super.oncreate(vnode);
     
@@ -84,7 +84,6 @@ export default class TagFilterModal extends Modal {
       closeBtn.setAttribute('type', 'button');
     }
   }
-  // ===============================================
 
   private guardEnsureLoaded(): boolean {
     const cats = getCategories();
@@ -274,7 +273,7 @@ export default class TagFilterModal extends Modal {
     ];
   }
 
-  // === 修复版：添加 inputWidth 修复挤压问题 + 添加 icons 修复图标问题 ===
+  // === 修复版：仅在有已选标签时才应用动态宽度 ===
   private renderHeader(
     expandAll?: () => void,
     collapseAll?: () => void
@@ -289,16 +288,31 @@ export default class TagFilterModal extends Modal {
       .map((s) => bySlug.get(s))
       .filter(Boolean) as Tag[];
 
-    // --- 挤压问题修复：开始 ---
     const placeholder = app.translator.trans(
       'lady-byron-tag-filter.forum.toolbar.placeholder'
     );
-    // 计算输入框应有的最小宽度
-    const inputWidth = Math.max(
-      lengthWithCJK(placeholder),
-      lengthWithCJK(this.filter())
-    );
+    
+    // --- 挤压问题修复：开始 ---
+    // 1. 定义基础属性
+    const inputAttrs: any = {
+      className: 'FormControl',
+      placeholder: placeholder,
+      bidi: this.filter,
+    };
+
+    // 2. 仅当有已选标签时，才计算并应用动态 style
+    if (selectedTags.length > 0) {
+      const inputWidth = Math.max(
+        10, // 最小宽度
+        lengthWithCJK(placeholder),
+        lengthWithCJK(this.filter())
+      );
+      inputAttrs.style = { width: inputWidth + 'ch' };
+    }
+    // (如果没有已选标签，inputAttrs.style 将为 undefined，
+    // input 会自动 100% 宽度，修复挤压问题)
     // --- 挤压问题修复：结束 ---
+
 
     return (
       <div className="Modal-body">
@@ -316,13 +330,8 @@ export default class TagFilterModal extends Modal {
                   </span>
                 ))}
               </span>
-              <input
-                className="FormControl"
-                placeholder={placeholder}
-                bidi={this.filter}
-                // --- 挤压问题修复：应用动态宽度 ---
-                style={{ width: inputWidth + 'ch' }}
-              />
+              {/* --- 挤压问题修复：应用动态属性 --- */}
+              <input {...inputAttrs} />
             </div>
           </div>
 
@@ -348,7 +357,6 @@ export default class TagFilterModal extends Modal {
               )}
             </Button>
 
-            {/* --- 图标问题修复：添加 icon 属性 --- */}
             {expandAll && collapseAll ? (
               <>
                 <Button
@@ -375,7 +383,6 @@ export default class TagFilterModal extends Modal {
                 </Button>
               </>
             ) : null}
-            {/* --- 图标问题修复：结束 --- */}
           </div>
         </div>
       </div>
@@ -399,7 +406,6 @@ export default class TagFilterModal extends Modal {
   }
 }
 
-// === 挤压问题修复：从插件A移植的辅助函数 ===
 /** 与原生一致的宽度计算：CJK 算 2 个字符宽 */
 function lengthWithCJK(text: string) {
   let len = 0;
@@ -409,4 +415,3 @@ function lengthWithCJK(text: string) {
   // 为输入框光标额外增加一点宽度
   return len + 1;
 }
-// ========================================
