@@ -1,58 +1,45 @@
 /* —— 分组列表基础 —— */
 .lbtc-tf-GroupList { list-style: none; margin: 0; padding: 0; }
 .lbtc-tf-GroupHeader {
-  display: flex; align-items: center; cursor: pointer;
-  font-weight: 600; margin: 8px 0 4px;
+  display: flex; align-items: center; cursor: pointer;
+  font-weight: 600; margin: 8px 0 4px;
 }
 .lbtc-tf-GroupHeader-caret { margin-right: 6px; transition: transform .2s ease; }
 .lbtc-tf-GroupHeader.collapsed .lbtc-tf-GroupHeader-caret { transform: rotate(-90deg); }
 .lbtc-tf-GroupBody { display: flex; flex-wrap: wrap; gap: 6px 8px; }
 
-/* * ===== 修改点：芯片 (新设计：模仿 tagLabel) =====
- */
+/* —— 芯片 —— */
 .lbtc-tf-Chip.Button {
-  display: inline-flex; align-items: center; vertical-align: top;
-  margin: 0; /* 移除旧的 margin, .lbtc-tf-GroupBody 的 'gap' 属性会处理间距 */
-  padding: 4px 8px; /* 减小 padding，使其更紧凑 */
-  line-height: 1.25;
-  border-radius: 4px; /* 减小圆角，使其更像原生 tagLabel */
-  border: 1px solid transparent; /* 移除边框 */
-  
-  /* 核心修改：使用变量设置背景色，而不是边框 */
-  background: var(--tag-title-color, var(--tag-color));
+  display: inline-flex; align-items: center; vertical-align: top;
+  margin: 2px; padding: 6px 10px; line-height: 1.25;
+  border-radius: 10px;
+  border: 1px solid var(--tag-title-color, var(--tag-color));
+  background: transparent;
 }
-
 .lbtc-tf-Chip .Button-label { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .lbtc-tf-Chip .SelectTagListItem-icon { flex: 0 0 auto; margin-right: 2px; }
 
-/* 核心修改：强制文字和图标为白色 (Flarum 原生 tagLabel 也是白色文字) */
+/* 始终用彩色文字（包含选中态） */
 .lbtc-tf-Chip .SelectTagListItem-name,
-.lbtc-tf-Chip.Button.is-selected .SelectTagListItem-name,
-.lbtc-tf-Chip .Button-label .TagIcon { /* .TagIcon 是 tagIcon() 助手渲染的图标类 */
-  color: #fff !important; 
+.lbtc-tf-Chip.Button.is-selected .SelectTagListItem-name {
+  color: var(--tag-title-color, var(--tag-color)) !important;
 }
 
-/* 隐藏描述 (保持不变) */
+/* 隐藏描述，避免拉长 */
 .lbtc-tf-Chip .SelectTagListItem-description { display: none; }
 
-/* 选中对勾样式 (保持不变) */
-/* (这个对勾是黑色的，在彩色的背景和白色的文字/图标之间，对比度是OK的) */
+/* 选中对勾样式 */
 .lbtc-tf-Chip .SelectTagListItem-checkIcon { color: #111; text-shadow: 0 0 2px rgba(255,255,255,.5); }
 
-
-/* * ===== 以下规则与 TagChip 样式无关，您可以保留或移除 =====
- */
-
 /* —— 工具栏按钮里的“已选标签”彩色文本 —— */
-/* (这个是用来设置弹窗 *外部* 那个触发按钮的样式) */
 .lbtc-tf-ToolbarTag {
-  color: var(--tag-title-color, var(--tag-color)) !important;
-  font-weight: 600;
+  color: var(--tag-title-color, var(--tag-color)) !important;
+  font-weight: 600;
 }
 
-/* (这个是用来禁用弹窗动画的) */
+/* 仅针对本扩展的 Modal，保证动画事件一定触发且非常短 */
 .lbtc-tf-Modal .Modal-backdrop,
 .lbtc-tf-Modal .Modal-content {
-  animation-duration: 0.001s !important;
-  animation-iteration-count: 1 !important;
+  animation-duration: 0.001s !important;
+  animation-iteration-count: 1 !important;
 }
