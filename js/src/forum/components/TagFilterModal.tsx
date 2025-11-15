@@ -91,14 +91,21 @@ export default class TagFilterModal extends Modal {
   }
   // =================================================
 
-  // 把右上角 X 强制设为非提交按钮，避免触发 submit (保持不变)
+  // 把右上角 X 强制设为非提交按钮，避免触发 submit
   oncreate(vnode: Mithril.VnodeDOM) {
     super.oncreate(vnode);
+    
     const closeBtn =
       this.element?.querySelector<HTMLButtonElement>('.Modal-close');
-    if (closeBtn && !closeBtn.getAttribute('type')) {
+
+    // === 修改点 ===
+    // 移除 "if" 检查，无条件地将类型设为 'button'。
+    // 这可以保证 "X" 按钮永远不会触发 onsubmit，
+    // 从而修复“双重 hide()”导致的页面卡死问题。
+    if (closeBtn) {
       closeBtn.setAttribute('type', 'button');
     }
+    // ==============
   }
 
   /**
