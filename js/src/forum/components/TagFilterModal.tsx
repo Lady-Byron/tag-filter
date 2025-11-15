@@ -8,20 +8,32 @@ import sortTags from 'flarum/tags/common/utils/sortTags';
 import type Tag from 'flarum/tags/common/models/Tag';
 
 import TagChip from './TagChip';
-import { getCategories, pickTagsInCategories, loadCollapsed, saveCollapsed } from '../util/categories';
-import { getCurrentQ, parseQ, stringifyQ, toggleTagSlug, clearTagsInQ } from '../util/query';
+import {
+  getCategories,
+  pickTagsInCategories,
+  loadCollapsed,
+  saveCollapsed,
+} from '../util/categories';
+import {
+  getCurrentQ,
+  parseQ,
+  stringifyQ,
+  toggleTagSlug,
+  clearTagsInQ,
+} from '../util/query';
+import { ensureCategoryTagsLoaded, warmupTags } from '../util/tags';
 
 type Vnode = Mithril.Vnode<Record<string, never>, TagFilterModal>;
 
 export default class TagFilterModal extends Modal {
-  static isDismissibleViaEscKey = true;
-  static isDismissibleViaBackdropClick = true;
-  static isDismissibleViaCloseButton = true;
-
+  private loading = true;
   private allTags: Tag[] = [];
   private filter = Stream<string>('');
   private collapsed: Record<string, boolean> = {};
   private initialized = false;
+
+  // 防止 guard 重入
+  private guardPending = false;
 
   className() {
     return 'lbtc-tf-Modal Modal--large';
@@ -31,27 +43,80 @@ export default class TagFilterModal extends Modal {
     return app.translator.trans('lady-byron-tag-filter.forum.toolbar.button');
   }
 
-  oninit(vnode: Vnode) {
+  async oninit(vnode: Vnode) {
     super.oninit(vnode);
     this.collapsed = loadCollapsed();
+
+    // 仅当分类需要但缓存缺失时才请求；否则使用已有缓存
+    await ensureCategoryTagsLoaded();
     this.allTags = app.store.all<Tag>('tags');
+    this.loading = false;
   }
 
+  // 表单提交一律视为“关闭”以规避 submit 干扰
+  onsubmit(e: SubmitEvent) {
+    e.preventDefault();
+    this.hide();
+  }
+
+  // 把右上角 X 强制设为非提交按钮，避免触发 submit
   oncreate(vnode: Mithril.VnodeDOM) {
     super.oncreate(vnode);
-    // 只把右上角 X 设为非提交按钮，避免 submit；不改 onclick，避免 double-close
-    const closeBtn = this.element?.querySelector<HTMLButtonElement>('.Modal-close');
+    const closeBtn =
+      this.element?.querySelector<HTMLButtonElement>('.Modal-close');
     if (closeBtn && !closeBtn.getAttribute('type')) {
       closeBtn.setAttribute('type', 'button');
     }
   }
 
-  onsubmit(e: SubmitEvent) {
-    e.preventDefault();
+  /**
+   * 渲染前兜底：若发现分类中的某些 tagId 仍未载入，
+   * 触发一次后台加载并显示 Loading；加载完自动重绘。
+   * 同步返回：true=可渲染，false=需等待。
+   */
+  private guardEnsureLoaded(): boolean {
+    const cats = getCategories();
+    if (!cats.length) return true;
+
+    const have = new Set(this.allTags.map((t) => String(t.id())));
+    let missing = false;
+    for (const g of cats) {
+      for (const id of g.tagIds || []) {
+        if (!have.has(String(id))) {
+          missing = true;
+          break;
+        }
+      }
+      if (missing) break;
+    }
+    if (!missing) return true;
+
+    if (!this.guardPending) {
+      this.guardPending = true;
+      this.loading = true;
+      warmupTags()
+        .catch(() => {})
+        .finally(() => {
+          this.allTags = app.store.all<Tag>('tags');
+          this.loading = false;
+          this.guardPending = false;
+          m.redraw();
+        });
+    }
+    return false;
   }
 
   content() {
-    if (!this.allTags.length) {
+    if (this.loading) {
+      return (
+        <div className="Modal-body">
+          <LoadingIndicator />
+        </div>
+      );
+    }
+
+    // 若仍缺失，先显示 Loading，等 guard 拉完再渲染
+    if (!this.guardEnsureLoaded()) {
       return (
         <div className="Modal-body">
           <LoadingIndicator />
@@ -64,7 +129,11 @@ export default class TagFilterModal extends Modal {
 
     const keyword = (this.filter() || '').trim().toLowerCase();
     const visible = keyword
-      ? this.allTags.filter((t) => (`${t.name()} ${t.description() || ''}`).toLowerCase().includes(keyword))
+      ? this.allTags.filter((t) =>
+          (`${t.name()} ${t.description() || ''}`)
+            .toLowerCase()
+            .includes(keyword)
+        )
       : this.allTags.slice();
 
     const cats = getCategories();
@@ -72,6 +141,7 @@ export default class TagFilterModal extends Modal {
     if (cats.length) {
       const { grouped, ungrouped } = pickTagsInCategories(visible, cats);
 
+      // 默认全部折叠（含“未分组”），只做一次；状态持久化
       if (!this.initialized) {
         cats.forEach((g) => (this.collapsed[String(g.id)] ??= true));
         if (ungrouped.length) this.collapsed.__ungrouped__ ??= true;
@@ -85,7 +155,6 @@ export default class TagFilterModal extends Modal {
         saveCollapsed(this.collapsed);
         m.redraw();
       };
-
       const collapseAll = () => {
         cats.forEach((g) => (this.collapsed[String(g.id)] = true));
         this.collapsed.__ungrouped__ = true;
@@ -104,14 +173,14 @@ export default class TagFilterModal extends Modal {
 
         sections.push(
           <li
-            key={`g-${key}-header`}
             className={classList('lbtc-tf-GroupHeader', { collapsed: isCollapsed })}
             role="button"
             aria-expanded={!isCollapsed}
             tabindex="0"
             onclick={() => this.toggle(key)}
             onkeydown={(e: KeyboardEvent) =>
-              (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), this.toggle(key))
+              (e.key === 'Enter' || e.key === ' ') &&
+              (e.preventDefault(), this.toggle(key))
             }
           >
             <i className="fas fa-chevron-down lbtc-tf-GroupHeader-caret" />
@@ -121,16 +190,13 @@ export default class TagFilterModal extends Modal {
 
         if (!isCollapsed) {
           sections.push(
-            <li key={`g-${key}-body`} className="lbtc-tf-GroupBody">
-              {sorted.map((t) => (
-                <span key={`t-${t.id()}`} style={{ display: 'contents' }}>
-                  {TagChip(t, {
-                    selected: selectedSet.has(t.slug()!),
-                    // 多选：实时刷新，不关闭弹窗
-                    onclick: () => this.toggleSelect(t.slug()!, true),
-                  })}
-                </span>
-              ))}
+            <li className="lbtc-tf-GroupBody">
+              {sorted.map((t) =>
+                TagChip(t, {
+                  selected: selectedSet.has(t.slug()!),
+                  onclick: () => this.toggleSelect(t.slug()!),
+                })
+              )}
             </li>
           );
         }
@@ -144,32 +210,32 @@ export default class TagFilterModal extends Modal {
 
         sections.push(
           <li
-            key={`g-${key}-header`}
             className={classList('lbtc-tf-GroupHeader', { collapsed: isCollapsed })}
             role="button"
             aria-expanded={!isCollapsed}
             tabindex="0"
             onclick={() => this.toggle(key)}
             onkeydown={(e: KeyboardEvent) =>
-              (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), this.toggle(key))
+              (e.key === 'Enter' || e.key === ' ') &&
+              (e.preventDefault(), this.toggle(key))
             }
           >
             <i className="fas fa-chevron-down lbtc-tf-GroupHeader-caret" />
-            {app.translator.trans('lady-byron-tag-filter.forum.grouped.ungrouped')}
+            {app.translator.trans(
+              'lady-byron-tag-filter.forum.grouped.ungrouped'
+            )}
           </li>
         );
 
         if (!isCollapsed) {
           sections.push(
-            <li key={`g-${key}-body`} className="lbtc-tf-GroupBody">
-              {sorted.map((t) => (
-                <span key={`t-${t.id()}`} style={{ display: 'contents' }}>
-                  {TagChip(t, {
-                    selected: selectedSet.has(t.slug()!),
-                    onclick: () => this.toggleSelect(t.slug()!, true),
-                  })}
-                </span>
-              ))}
+            <li className="lbtc-tf-GroupBody">
+              {sorted.map((t) =>
+                TagChip(t, {
+                  selected: selectedSet.has(t.slug()!),
+                  onclick: () => this.toggleSelect(t.slug()!),
+                })
+              )}
             </li>
           );
         }
@@ -183,37 +249,39 @@ export default class TagFilterModal extends Modal {
       ];
     }
 
-    // 无分组回退：扁平列表
+    // —— 无分组：扁平回退 ——
     const header = this.renderHeader(selectedSlugs);
     const flat = sortTags(visible.slice());
-
     return [
       header,
       <div className="Modal-footer">
         <div className="lbtc-tf-GroupBody">
-          {flat.map((t) => (
-            <span key={`flat-${t.id()}`} style={{ display: 'contents' }}>
-              {TagChip(t, {
-                selected: selectedSet.has(t.slug()!),
-                onclick: () => this.toggleSelect(t.slug()!, true),
-              })}
-            </span>
-          ))}
+          {flat.map((t) =>
+            TagChip(t, {
+              selected: selectedSet.has(t.slug()!),
+              onclick: () => this.toggleSelect(t.slug()!),
+            })
+          )}
         </div>
       </div>,
     ];
   }
 
-  private renderHeader(selectedSlugs: string[], expandAll?: () => void, collapseAll?: () => void) {
+  private renderHeader(
+    selectedSlugs: string[],
+    expandAll?: () => void,
+    collapseAll?: () => void
+  ) {
     const clearAll = () => {
       const q = getCurrentQ();
       const cleared = stringifyQ(clearTagsInQ(q));
-      // 清空后保持弹窗打开，仅刷新结果
-      this.navigateWithQ(cleared, { close: false, replace: true });
+      this.navigateWithQ(cleared);
     };
 
     const bySlug = new Map(this.allTags.map((t) => [t.slug()!, t]));
-    const selectedTags = selectedSlugs.map((s) => bySlug.get(s)).filter(Boolean) as Tag[];
+    const selectedTags = selectedSlugs
+      .map((s) => bySlug.get(s))
+      .filter(Boolean) as Tag[];
 
     return (
       <div className="Modal-body">
@@ -221,7 +289,9 @@ export default class TagFilterModal extends Modal {
           <div className="Form-group">
             <input
               className="FormControl"
-              placeholder={app.translator.trans('lady-byron-tag-filter.forum.toolbar.placeholder')}
+              placeholder={app.translator.trans(
+                'lady-byron-tag-filter.forum.toolbar.placeholder'
+              )}
               bidi={this.filter}
             />
           </div>
@@ -230,48 +300,50 @@ export default class TagFilterModal extends Modal {
             <Button
               type="button"
               className="Button"
-              icon="fa-solid fa-eraser"
+              icon="fas fa-eraser"
               onclick={clearAll}
               disabled={!selectedSlugs.length}
             >
-              {app.translator.trans('lady-byron-tag-filter.forum.toolbar.clear')}
+              {app.translator.trans(
+                'lady-byron-tag-filter.forum.toolbar.clear'
+              )}
             </Button>
-
             {expandAll && collapseAll ? (
               <>
                 <Button
                   type="button"
                   className="Button"
                   style={{ marginLeft: '8px' }}
-                  icon="fa-solid fa-angles-down"
                   onclick={expandAll}
                 >
-                  {app.translator.trans('lady-byron-tag-filter.forum.toolbar.expand_all')}
+                  {app.translator.trans(
+                    'lady-byron-tag-filter.forum.toolbar.expand_all'
+                  )}
                 </Button>
                 <Button
                   type="button"
                   className="Button"
                   style={{ marginLeft: '8px' }}
-                  icon="fa-solid fa-angles-up"
                   onclick={collapseAll}
                 >
-                  {app.translator.trans('lady-byron-tag-filter.forum.toolbar.collapse_all')}
+                  {app.translator.trans(
+                    'lady-byron-tag-filter.forum.toolbar.collapse_all'
+                  )}
                 </Button>
               </>
             ) : null}
           </div>
 
+          {/* 已选择标签反馈（彩色芯片，点击可移除；描述在 CSS 中隐藏） */}
           <div className="Form-group">
             {selectedTags.length ? (
               <div className="lbtc-tf-GroupBody">
-                {selectedTags.map((t) => (
-                  <span key={`sel-${t.id()}`} style={{ display: 'contents' }}>
-                    {TagChip(t, {
-                      selected: true,
-                      onclick: () => this.toggleSelect(t.slug()!, true),
-                    })}
-                  </span>
-                ))}
+                {selectedTags.map((t) =>
+                  TagChip(t, {
+                    selected: true,
+                    onclick: () => this.toggleSelect(t.slug()!),
+                  })
+                )}
               </div>
             ) : null}
           </div>
@@ -286,59 +358,16 @@ export default class TagFilterModal extends Modal {
     m.redraw();
   }
 
-  // keepOpen = true：只刷新结果，不关闭弹窗
-  private toggleSelect(slug: string, keepOpen = false) {
+  private toggleSelect(slug: string) {
     const q = getCurrentQ();
     const { rest, tagSlugs } = parseQ(q);
     const next = toggleTagSlug(rest, tagSlugs, slug);
-    this.navigateWithQ(stringifyQ(next), { close: !keepOpen, replace: true });
+    this.navigateWithQ(stringifyQ(next));
   }
 
-  /**
-   * 更新 q，并显式刷新讨论列表。
-   * 关键点：直接把我们拼出来的“空格版 q”喂给 discussions.refreshParams，
-   * 避免再从 URL 读回带 '+' 的版本。
-   */
-  private navigateWithQ(q: string, opts: { close?: boolean; replace?: boolean } = {}) {
-    const { close = false, replace = true } = opts;
-
-    // 我们自己生成的 q 已经是 "tag:foo tag:bar" 形式，不做额外 '+' 处理
-    const normalizedQ = q || '';
-
-    if (close) {
-      app.modal?.close?.();
-    }
-
-    requestAnimationFrame(() => {
-      const dl: any = (app as any).discussions;
-
-      // 以现有参数为基础，替换 q（保留 sort / author 等）
-      let params: any =
-        dl && typeof dl.getParams === 'function'
-          ? { ...dl.getParams() }
-          : { ...m.route.param() };
-
-      if (normalizedQ) {
-        params.q = normalizedQ;
-      } else {
-        delete params.q;
-      }
-
-      // 显式刷新列表，确保 filter[q] 用的是空格版 q
-      if (dl && typeof dl.refreshParams === 'function') {
-        dl.refreshParams(params, 1);
-      }
-
-      // 同步搜索框显示（可选）
-      if ((app.search as any)?.setValue) {
-        (app.search as any).setValue(normalizedQ);
-      }
-
-      // 同步 URL（浏览器会把空格编码成 '+'，但我们之后不再从 URL 反向解析）
-      m.route.set(app.route('index', normalizedQ ? { q: normalizedQ } : {}), undefined as any, {
-        replace,
-      } as any);
-    });
+  private navigateWithQ(q: string) {
+    m.route.set(app.route('index', q ? { q } : {}));
+    this.hide();
   }
 }
 
