@@ -64,7 +64,9 @@ app.initializers.add(EXT_ID, () => {
         onclick={async () => {
           try {
             await ensureCategoryTagsLoaded();
-          } catch {}
+          } catch (e) {
+            console.warn('[tag-filter] Failed to preload category tags:', e);
+          }
           app.modal.show(TagFilterModal);
         }}
         onmouseenter={() => warmupTags()}

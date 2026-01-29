@@ -10,11 +10,6 @@
   "suggest": {
     "lady-byron/tag-categories": "Provides forum.tagCategories for grouped view (optional)."
   },
-  "autoload": {
-    "psr-4": {
-      "LadyByron\\TagFilter\\": "src/"
-    }
-  },
   "extra": {
     "flarum-extension": {
       "id": "lady-byron-tag-filter",

@@ -33,14 +33,3 @@ export function stringifyQ(parsed: { rest: string; tagSlugs: string[] }): string
   return items.join(' ').trim();
 }
 
-export function toggleTagSlug(rest: string, current: string[], slug: string) {
-  const set = new Set(current);
-  if (set.has(slug)) set.delete(slug);
-  else set.add(slug);
-  return { rest, tagSlugs: Array.from(set) };
-}
-
-export function clearTagsInQ(q: string) {
-  const { rest } = parseQ(q);
-  return { rest, tagSlugs: [] as string[] };
-}

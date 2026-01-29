@@ -29,13 +29,11 @@ export default function TagChip(
       data-tag-id={tag.id() || ''}
     >
       <span className="Button-label">
-        <i className="SelectTagListItem-icon">
-          {tag.icon()
-            ? tagIcon(tag, { className: 'SelectTagListItem-tagIcon' })
-            : selected
-              ? <i className="icon TagIcon fas fa-check SelectTagListItem-checkIcon" />
-              : tagIcon(tag, { className: 'SelectTagListItem-tagIcon' })}
-        </i>
+        <span className="SelectTagListItem-icon">
+          {selected && !tag.icon()
+            ? <i className="icon TagIcon fas fa-check SelectTagListItem-checkIcon" />
+            : tagIcon(tag, { className: 'SelectTagListItem-tagIcon' })}
+        </span>
         <span className="SelectTagListItem-name">{name}</span>
         {desc ? <span className="SelectTagListItem-description">{desc}</span> : null}
       </span>
