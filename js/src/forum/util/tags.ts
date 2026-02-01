@@ -1,12 +1,5 @@
 import app from 'flarum/forum/app';
-
-type ForumTagCategory = {
-  id: number | string;
-  name: string;
-  slug: string | null;
-  order: number | null;
-  tagIds: (number | string)[];
-};
+import type { ForumTagCategory } from './categories';
 
 let warmupPromise: Promise<any> | null = null;
 
@@ -15,7 +8,9 @@ export function warmupTags() {
   if (!warmupPromise) {
     warmupPromise = app.store
       .find('tags', { include: 'parent', 'page[limit]': 999 })
-      .catch(() => {}); // 静默失败
+      .catch(() => {
+        warmupPromise = null; // 失败后重置，允许下次重试
+      });
   }
   return warmupPromise;
 }

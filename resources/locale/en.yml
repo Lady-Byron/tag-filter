@@ -1,0 +1,12 @@
+lady-byron-tag-filter:
+  forum:
+    toolbar:
+      done: Done
+      button: Tags
+      placeholder: Search tags…
+      clear: Clear
+      expand_all: Expand All
+      collapse_all: Collapse All
+      hint: Search for tags here; click a tag again to deselect
+    grouped:
+      ungrouped: Ungrouped

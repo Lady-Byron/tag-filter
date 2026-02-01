@@ -21,7 +21,6 @@ import {
   getCurrentQ,
   parseQ,
   stringifyQ,
-  clearTagsInQ,
 } from '../util/query';
 import { ensureCategoryTagsLoaded, warmupTags } from '../util/tags';
 
@@ -54,9 +53,9 @@ export default class TagFilterModal extends Modal {
     await ensureCategoryTagsLoaded();
     this.allTags = app.store.all<Tag>('tags');
     this.loading = false;
+    m.redraw();
   }
 
-  // (卡死问题修复：移除 this.hide())
   onsubmit(e: SubmitEvent) {
     e.preventDefault();
 
@@ -70,6 +69,8 @@ export default class TagFilterModal extends Modal {
     if (newQ !== oldQ) {
       m.route.set(app.route('index', newQ ? { q: newQ } : {}));
     }
+
+    app.modal.close();
   }
 
   // (保留 "X" 按钮的双重保险)
@@ -422,7 +423,7 @@ export default class TagFilterModal extends Modal {
 function lengthWithCJK(text: string) {
   let len = 0;
   for (const ch of text || '') {
-    len += /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(ch) ? 2 : 1;
+    len += /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF\u3040-\u30FF\u31F0-\u31FF\uAC00-\uD7AF\uFF01-\uFF60\uFFE0-\uFFE6]/.test(ch) ? 2 : 1;
   }
   return len + 1;
 }
