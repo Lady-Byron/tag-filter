@@ -1,6 +1,6 @@
 {
   "name": "lady-byron/tag-filter",
-  "description": "Toolbar tag filter with grouped view when lady-byron/tag-categories is enabled. Keeps tags-filter UI/behavior.",
+  "description": "Toolbar tag filter.",
   "type": "flarum-extension",
   "license": "MIT",
   "require": {
@@ -12,16 +12,13 @@
   },
   "extra": {
     "flarum-extension": {
-      "id": "lady-byron-tag-filter",
-      "title": "Tag Filter",
+      "title": "Flop Filter",
       "category": "feature",
       "icon": {
         "name": "fas fa-filter",
-        "backgroundColor": "#6941C6",
-        "color": "#ffffff"
+        "backgroundColor": "#5B8C5A",
+        "color": "#fff"
       }
     }
-  },
-  "minimum-stability": "stable",
-  "prefer-stable": true
+  }
 }
